@@ -1347,6 +1347,76 @@ window.KNOWLEDGE_DATA =
       ]
     },
     {
+      "id": "git-remote-push",
+      "category": "linux",
+      "title": "git remote add / branch -M / push -u：推到 GitHub 的三步走",
+      "summary": "本地仓库首次推送到 GitHub：add 远程 → 分支改名 → push 并建立跟踪关系。",
+      "tags": ["Git", "远程", "推送"],
+      "updatedAt": "2026-11-02",
+      "content": "新建 GitHub 空仓库后，本地已有代码，按这三条推上去：\n\n### 第 1 步：关联远程仓库\n```bash\ngit remote add origin https://github.com/xiexindong/docker-linux-pm2.git\n```\n- `origin` 是远程仓库的默认别名，以后 push/pull 直接用 `origin`\n- URL 换成你自己的仓库地址，支持 HTTPS 和 SSH 两种协议\n- **坑**：如果 origin 已存在会报 `fatal: remote origin already exists`，先用 `git remote remove origin` 删掉再加\n\n### 第 2 步：把分支改成 main\n```bash\ngit branch -M main\n```\n- `-M` 是强制重命名（等于 `-m --force`），如果 main 已存在会覆盖\n- GitHub 新仓库默认主分支是 main，但 `git init` 默认叫 master，所以要统一\n\n### 第 3 步：推送并建立跟踪\n```bash\ngit push -u origin main\n```\n- `-u`（`--set-upstream`）建立本地 main 和远程 origin/main 的跟踪关系\n- 以后就可以直接 `git push` / `git pull`，不用每次写 origin main\n\n### 完整流程（复制粘贴版）\n```bash\ngit remote add origin https://github.com/xiexindong/docker-linux-pm2.git\ngit branch -M main\ngit push -u origin main\n```",
+      "commands": [
+        {
+          "desc": "关联远程仓库（首次）",
+          "cmd": "git remote add origin https://github.com/xiexindong/docker-linux-pm2.git",
+          "parts": [
+            { "token": "git", "desc": "Git 版本控制工具" },
+            { "token": "remote", "desc": "管理远程仓库" },
+            { "token": "add", "desc": "添加一个新的远程仓库" },
+            { "token": "origin", "desc": "远程仓库的别名，origin 是约定俗成的默认名" },
+            { "token": "https://github.com/xiexindong/docker-linux-pm2.git", "desc": "远程仓库地址，HTTPS 协议；用 SSH 就是 git@github.com:用户名/仓库.git" }
+          ]
+        },
+        {
+          "desc": "把当前分支强制改名为 main",
+          "cmd": "git branch -M main",
+          "parts": [
+            { "token": "git", "desc": "Git 工具" },
+            { "token": "branch", "desc": "管理分支" },
+            { "token": "-M", "desc": "强制重命名（-m 的 force 版本），即使目标分支已存在也覆盖" },
+            { "token": "main", "desc": "新的分支名，GitHub 默认主分支叫这个" }
+          ]
+        },
+        {
+          "desc": "推送到远程并建立跟踪",
+          "cmd": "git push -u origin main",
+          "parts": [
+            { "token": "git", "desc": "Git 工具" },
+            { "token": "push", "desc": "把本地提交推送到远程仓库" },
+            { "token": "-u", "desc": "--set-upstream：建立本地 main 和远程 origin/main 的跟踪关系，之后可直接 git push/pull" },
+            { "token": "origin", "desc": "目标远程仓库的别名" },
+            { "token": "main", "desc": "要推送的本地分支名" }
+          ]
+        },
+        {
+          "desc": "查看当前远程配置（确认加对了）",
+          "cmd": "git remote -v",
+          "parts": [
+            { "token": "git", "desc": "Git 工具" },
+            { "token": "remote", "desc": "管理远程仓库" },
+            { "token": "-v", "desc": "verbose，显示每个远程对应的 fetch 和 push URL" }
+          ]
+        },
+        {
+          "desc": "origin 已存在时报错的恢复方法",
+          "cmd": "git remote remove origin; git remote add origin <新地址>",
+          "parts": [
+            { "token": "git", "desc": "Git 工具" },
+            { "token": "remote", "desc": "管理远程仓库" },
+            { "token": "remove", "desc": "删除已存在的远程仓库配置" },
+            { "token": "origin", "desc": "要删除的远程别名" },
+            { "token": ";", "desc": "shell 命令分隔符，Windows PowerShell 也支持" },
+            { "token": "<新地址>", "desc": "你想换成的新远程仓库 URL" }
+          ]
+        }
+      ],
+      "tips": [
+        "`git remote add` 失败八成是 origin 已存在，先 `git remote remove origin` 再加。",
+        "URL 是 HTTPS 还是 SSH：HTTPS 每次 push 要输密码或 token；SSH 配好密钥后免密。",
+        "推到远程如果提示 `rejected` 说远程有你本地没有的提交，用 `git pull --rebase origin main` 先拉下来再推。",
+        "以后再也不用 `-u origin main` 这堆了，直接 `git push` 就行，跟踪关系建立一次终身有效。"
+      ]
+    },
+    {
       "id": "docker-compose",
       "category": "docker",
       "title": "docker-compose：多容器一键编排",
