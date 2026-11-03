@@ -984,7 +984,64 @@ window.KNOWLEDGE_DATA =
         "`docker image prune -a` 会删掉所有没在使用的镜像，下次运行对应容器得重新 pull，网络慢的机器不要随便用。",
         "`docker volume prune` 可能把你真正想留的数据删掉，删前先跑 `docker volume ls` 确认。",
         "容器本身不占磁盘空间多，但容器的日志会不断增长；docker ps -a 看到一堆 Exited 的老容器可以放心 prune。",
-        "清理前先看 `docker system df` 的 RECLAIMABLE 列，别直接就上 prune -af。"
+        "清理前先看 `docker system df` 的 RECLAIMABLE 列，别直接就上 prune -af。",
+        "你这台机器的 Local Volumes Active=0 但 RECLAIMABLE 也显示 0B，Windows Docker Desktop 下 volume 统计和 Linux 不完全一致；删前直接 `docker volume ls` 逐个确认名字更稳妥。",
+        "Windows 下 `docker system df` 输出格式和 Linux 完全一样，只是 Build Cache 偶尔显示 0（没跑过 build）。"
+      ]
+    },
+    {
+      "id": "docker-system-df-real",
+      "category": "docker",
+      "title": "实战：你的 docker system df 真实输出逐行解读",
+      "summary": "以你 Windows 上跑出来的结果为例，逐列拆解 8 个镜像、9 个容器、4 个卷到底是什么情况。",
+      "tags": ["Docker", "磁盘", "实战", "system df"],
+      "updatedAt": "2026-11-03",
+      "content": "这是你本机（Windows Docker Desktop）执行 `docker system df` 的真实输出：\n\n```\nTYPE            TOTAL     ACTIVE    SIZE      RECLAIMABLE\nImages          8         2         5.971GB   0B (0%)\nContainers      9         2         274.4kB   196.6kB (71%)\nLocal Volumes   4         0         486.4MB   0B (0%)\nBuild Cache     0         0         0B        0B\n```\n\n## 逐行解读\n\n### ① Images：8 个镜像，2 个在用\n\n| 项目 | 含义 | 为什么 RECLAIMABLE 是 0%？ |\n|---|---|---|\n| TOTAL 8 | 本地有 8 个镜像文件 | — |\n| ACTIVE 2 | 只有 2 个正在运行的容器在用它们 | — |\n| SIZE 5.971GB | 镜像去重后总共占 5.97GB | — |\n| RECLAIMABLE 0B (0%) | 看起来没可回收的？不对 | **关键：Docker 把「被已退出的容器占用」也算「在用」**。你之前那 6 个 Exited 容器仍然占着它们各自的镜像引用，所以这 8 个镜像全部被标记为「in use」。想释放：先把那 6 个 Exited 容器删了，再 `docker image prune` |\n\n### ② Containers：9 个，2 个在跑\n\n| 项目 | 含义 |\n|---|---|\n| TOTAL 9 | 总共 9 个容器（包含 7 个已退出的） |\n| ACTIVE 2 | 正在运行的 2 个 |\n| SIZE 274.4kB | 容器可写层的大小（不含镜像本身） |\n| RECLAIMABLE 196.6kB (71%) | 7 个已退出容器的可写层，删掉能省约 197KB |\n\n**这条最没争议**：直接 `docker container prune` 就能回收，不会影响正在跑的 2 个容器。\n\n### ③ Local Volumes：4 个卷，0 个在用\n\n| 项目 | 含义 | 疑问 |\n|---|---|---|\n| TOTAL 4 | 挂了 4 个数据卷 | — |\n| ACTIVE 0 | 没有正在运行的容器在挂它们 | — |\n| SIZE 486.4MB | 卷里的数据总共占 486MB | — |\n| RECLAIMABLE 0B | 显示不可回收？ | **Windows Docker Desktop 的 volume 统计和 Linux 不完全一致**。理论上 ACTIVE 为 0 就应该可回收。建议直接 `docker volume ls` 看名字，确认是哪个应用的数据再决定。**比如 milvus 的数据卷你可能不想删** |\n\n### ④ Build Cache：0\n\n正常，你还没写 Dockerfile 构建过自己的镜像。跑过 `docker build` 后这里就会有数字。\n\n## 给你的清理建议\n\n```bash\n# 安全第一：只清已退出的容器\ndocker container prune -f\n\n# 然后再跑一次 docker system df 看变化\ndocker system df\n\n# 如果 Images 的 RECLAIMABLE 变成了正数，再清镜像\ndocker image prune -f\n\n# Build Cache 没东西，跳过\n```\n\n**别直接上 `docker system prune -af`**：Local Volumes 里可能有 milvus 的向量数据、pgvector 的数据卷，一删就找不回来了。\n\n## 一个容易忽略的点\n\nDocker Desktop 在 Windows 上用 WSL2 跑，磁盘空间占用其实体现在 WSL2 的虚拟磁盘文件里。如果 `docker system df` 显示已经清干净了，但 Windows 磁盘空间没回来，可以执行：\n\n```powershell\n# 查看 WSL2 的 vhdx 文件大小（通常在 %LOCALAPPDATA%\\Docker\\wsl）\ndir \"$env:LOCALAPPDATA\\Docker\\wsl\"\n```\n\nvhdx 是动态扩容的，删掉容器/镜像后它不会自动缩小，要手动 compact（压缩虚拟磁盘）。",
+      "commands": [
+        {
+          "desc": "再跑一次，对比 prune 前后的变化",
+          "cmd": "docker system df",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "system", "desc": "系统级管理" },
+            { "token": "df", "desc": "磁盘占用" }
+          ]
+        },
+        {
+          "desc": "清已退出的容器（最安全）",
+          "cmd": "docker container prune -f",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "container", "desc": "容器管理" },
+            { "token": "prune", "desc": "裁剪：只删 Exited 状态的容器" },
+            { "token": "-f", "desc": "force：跳过交互确认" }
+          ]
+        },
+        {
+          "desc": "清悬空镜像（prune 完容器后再跑一次 system df 看 Images 列是否有变化）",
+          "cmd": "docker image prune -f",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "image", "desc": "镜像管理" },
+            { "token": "prune", "desc": "裁剪：删 REPOSITORY 为 <none> 的悬空镜像" },
+            { "token": "-f", "desc": "跳过确认" }
+          ]
+        },
+        {
+          "desc": "列出所有数据卷，确认名字再决定删不删",
+          "cmd": "docker volume ls",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "volume", "desc": "数据卷管理" },
+            { "token": "ls", "desc": "list，列出所有卷名，Windows Docker Desktop 下卷名通常是长 UUID 格式" }
+          ]
+        }
+      ],
+      "tips": [
+        "prune 的顺序很重要：先 `docker container prune` 清掉 Exited 的容器，再跑 `docker system df`，这时 Images 的 RECLAIMABLE 才会变出来；不然镜像一直被 Exited 容器「占着」。",
+        "Local Volumes 在 Windows 下 RECLAIMABLE 有时不准，直接 `docker volume ls` 看卷名再决定；像 milvus、pgvector 这种数据卷别乱删。",
+        "Docker Desktop 用 WSL2 时，删了容器/镜像后 Windows 磁盘空间不回来，要 compact vhdx 虚拟磁盘。",
+        "Build Cache 为 0 是正常的；跑过 `docker build` 后才会有。"
       ]
     },
     {
