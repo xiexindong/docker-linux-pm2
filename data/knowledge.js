@@ -855,6 +855,206 @@ window.KNOWLEDGE_DATA =
       ]
     },
     {
+      "id": "docker-search",
+      "category": "docker",
+      "title": "docker search：在仓库里找镜像",
+      "summary": "到 Docker Hub 等远程仓库按关键字搜镜像名，看 STAR 数和 OFFICIAL 标记挑靠谱的，找到后用 docker pull 拉。",
+      "tags": ["Docker", "镜像", "搜索", "Docker Hub"],
+      "updatedAt": "2026-11-03",
+      "content": "当你知道要用什么技术（比如 MySQL、Redis、Nginx）但不确定镜像名时，用 `docker search` 去远程仓库搜。\n\n## 输出怎么读\n\n```\nNAME            DESCRIPTION           STARS  OFFICIAL  AUTOMATED\nmysql            MySQL 是世界上最流行的开源关系数据库        18000+   [OK]\nredis            Redis 是内存键值存储                        15000+   [OK]\nmy-user/mysql    某个用户自己构建的 mysql                    42\n```\n\n| 列 | 含义 | 挑镜像时的判断 |\n|---|---|---|\n| NAME | 镜像名（用户名/仓库） | 带官方名（如 `mysql`、`redis`）优先，`[OK]` OFFICIAL 才是 Docker 官方维护 |\n| DESCRIPTION | 一段简介 | 官方镜像通常写得规范，用户镜像可能乱写 |\n| STARS | 收藏数 | STAR 越多越多人用，踩过的坑更多 |\n| OFFICIAL | 是否官方 | `[OK]` 是；空白是用户自己搭的 |\n| AUTOMATED | 是否自动构建 | `[OK]` 表示代码更新后自动重打包，通常质量更稳定 |\n\n## 实战：找 PostgreSQL 带向量插件\n\n```bash\ndocker search pgvector\n# 搜出 pgvector/pgvector:pg16 这种，STAR 多的优先\n```\n\n## 国内网络慢怎么办\n\nDocker Hub 在国内经常超时。两种思路：\n\n1. **加国内镜像加速器**（推荐，一劳永逸）—— 在 daemon.json 里配 registry-mirrors，Ubuntu 路径 `/etc/docker/daemon.json`：\n   ```json\n   { \"registry-mirrors\": [\"https://docker.m.daocloud.io\"] }\n   ```\n   改完 `systemctl restart docker` 生效。\n\n2. **docker pull 时指定完整镜像源**，例如阿里云：\n   ```bash\n   docker pull registry.cn-hangzhou.aliyuncs.com/library/nginx\n   ```\n\n## 几个常见官方镜像\n\n| 官方名 | 用途 | 拉取命令 |\n|---|---|---|\n| `nginx` | 静态网站 + 反向代理 | `docker pull nginx` |\n| `redis` | 内存缓存 | `docker pull redis:7` |\n| `mysql` | 关系型数据库 | `docker pull mysql:8.0` |\n| `node` | Node.js 运行时 | `docker pull node:20-alpine` |\n| `alpine` | 极小 Linux 基础镜像 | `docker pull alpine` |",
+      "commands": [
+        {
+          "desc": "按关键字搜镜像（你脑图里那条）",
+          "cmd": "docker search mysql",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "search", "desc": "到默认仓库（Docker Hub）里按关键字模糊搜索镜像" },
+            { "token": "mysql", "desc": "搜索关键字：镜像名或描述里包含 mysql 的都会返回" }
+          ]
+        },
+        {
+          "desc": "只看官方镜像（过滤掉用户镜像）",
+          "cmd": "docker search --filter is-official=true nginx",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "search", "desc": "搜索镜像" },
+            { "token": "--filter is-official=true", "desc": "过滤条件：只保留 OFFICIAL 列标 [OK] 的官方镜像" },
+            { "token": "nginx", "desc": "搜索关键字" }
+          ]
+        },
+        {
+          "desc": "按 STAR 数从高到低排序",
+          "cmd": "docker search --sort stars redis",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "search", "desc": "搜索镜像" },
+            { "token": "--sort stars", "desc": "按 STARS 列降序排，最热门的排最上面" },
+            { "token": "redis", "desc": "搜索关键字" }
+          ]
+        },
+        {
+          "desc": "搜索完整镜像名（带用户名）",
+          "cmd": "docker search zilliz/milvus",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "search", "desc": "搜索镜像" },
+            { "token": "zilliz/milvus", "desc": "完整的 用户名/仓库 名，精准匹配" }
+          ]
+        }
+      ],
+      "tips": [
+        "优先挑 OFFICIAL 标 `[OK]` 的镜像，这是 Docker 官方维护的，安全更新有保障。",
+        "同一镜像尽量指定版本 tag：`mysql:8.0` 比 `mysql` （默认 latest）更可复现，以后拉下来跑的是同一版本。",
+        "国内拉镜像慢先配 daemon.json 加速器；不要每次都手动改镜像源前缀。",
+        "`docker search` 只能搜公共仓库；私有仓库的镜像名字要按 `仓库地址/用户名/镜像名` 写，比如 `registry.cn-hangzhou.aliyuncs.com/library/nginx`。",
+        "搜索结果里可能出现 `docker search: Error response from daemon: Get https://...`，基本是网络问题，换加速器或等网络好点再试。"
+      ]
+    },
+    {
+      "id": "docker-system-df",
+      "category": "docker",
+      "title": "docker system df：Docker 到底占了我多少磁盘",
+      "summary": "一条命令把镜像、容器（含已退出的）、数据卷各自占的空间列出来；cleanup 列告诉你清了能省多少。",
+      "tags": ["Docker", "磁盘", "清理", "系统"],
+      "updatedAt": "2026-11-03",
+      "content": "Docker 用久了，磁盘被吃满了却不知道是谁占的。`docker system df`（disk free）就是答案。\n\n## 输出示例\n\n```\nTYPE            TOTAL     ACTIVE    SIZE      RECLAIMABLE\nImages          12        6         3.2GB     1.8GB (56%)\nContainers      9         3         420MB     210MB (50%)\nLocal Volumes   8         5         1.1GB     300MB (27%)\nBuild Cache     23        -         800MB     800MB (100%)\n```\n\n## 各列含义\n\n| 列 | 含义 | 我的机器怎么看 |\n|---|---|---|\n| TYPE | 资源类型 | Images=镜像模板、Containers=容器（包含已退出的，主要是日志）、Local Volumes=数据卷、Build Cache=构建缓存 |\n| TOTAL | 总数量 | 12 个镜像、9 个容器 |\n| ACTIVE | 当前在使用的数量 | 6 个镜像被运行中的容器用着，3 个是正在运行的容器 |\n| SIZE | 实际占用磁盘空间 | 镜像会去重，所以 3.2GB 是叠加后的真实占用 |\n| RECLAIMABLE | 清了能省多少 | 括号里是可回收占该类的百分比；Build Cache 100% 都能清 |\n\n## 四个类型分别怎么清\n\n| 类型 | 清理命令 | 会删什么 | 会不会影响正在跑的服务 |\n|---|---|---|---|\n| 构建缓存 | `docker builder prune` | 所有构建缓存 | ❌ 不影响任何运行中容器 |\n| 悬空镜像 | `docker image prune` | REPOSITORY 为 `<none>` 的残留镜像 | ❌ 不影响（这些本来就是没标签的死镜像） |\n| 没在使用的镜像 | `docker image prune -a` | 所有不被运行中容器用到的镜像 | ⚠️ 正在用的不会删，但下次跑对应容器得重新 pull |\n| 已退出的容器 | `docker container prune` | Exited 状态的容器 | ❌ 已退出的本来就不在跑 |\n| 没挂的卷 | `docker volume prune` | 没有任何容器挂载的卷 | ⚠️ 里面可能有你想留的数据，确认再删 |\n| 一键全清（慎重） | `docker system prune -a` | 上面所有 + 没挂的卷 | ⚠️ 几乎清空，慎用 |\n\n## 排查「磁盘满了」的顺序\n\n```\n① df -h /              → 先确认是整个磁盘满了还是 Docker 占了\n② docker system df     → 看哪类资源最肥\n③ docker image ls      → 列出镜像大小排序\n④ docker ps -a         → 看有没有一堆 Exited 的旧容器\n⑤ docker volume ls     → 看有多少孤儿卷\n```\n\n## 一个实用习惯\n\n在 `~/.bashrc` 或 `~/.zshrc` 里加个 alias：\n\n```bash\nalias docker-clean='docker system prune -af'\n```\n\n定期跑一次（每月或感觉慢了），能省不少磁盘。",
+      "commands": [
+        {
+          "desc": "查看 Docker 各类资源占用（你脑图里那条）",
+          "cmd": "docker system df",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "system", "desc": "Docker 系统级管理（不是单个镜像或容器）" },
+            { "token": "df", "desc": "disk free，显示镜像/容器/卷/构建缓存各自占用与可回收空间" }
+          ]
+        },
+        {
+          "desc": "详细模式：列出每个镜像/卷各自的大小",
+          "cmd": "docker system df -v",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "system", "desc": "系统级管理" },
+            { "token": "df", "desc": "磁盘占用" },
+            { "token": "-v", "desc": "verbose，输出更详细，逐个列出镜像和卷的名字与大小" }
+          ]
+        },
+        {
+          "desc": "只清构建缓存（最安全的清理）",
+          "cmd": "docker builder prune",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "builder", "desc": "Dockerfile 构建相关" },
+            { "token": "prune", "desc": "裁剪：删掉不再需要的构建缓存，不影响任何运行中的容器" }
+          ]
+        },
+        {
+          "desc": "清已退出的容器",
+          "cmd": "docker container prune -f",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "container", "desc": "容器管理" },
+            { "token": "prune", "desc": "裁剪：删掉 Exited 状态的容器" },
+            { "token": "-f", "desc": "force，不弹交互确认（脚本里用必须加）" }
+          ]
+        },
+        {
+          "desc": "清悬空镜像（REPOSITORY 为 <none> 的那些）",
+          "cmd": "docker image prune -f",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "image", "desc": "镜像管理" },
+            { "token": "prune", "desc": "裁剪：删掉没标签的悬空镜像" },
+            { "token": "-f", "desc": "force，跳过确认" }
+          ]
+        },
+        {
+          "desc": "最狠的一键清（清前务必确认）",
+          "cmd": "docker system prune -af",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "system", "desc": "系统级" },
+            { "token": "prune", "desc": "裁剪：清掉所有没在用的资源" },
+            { "token": "-a", "desc": "all：连不被使用的镜像也清" },
+            { "token": "-f", "desc": "force：跳过交互确认，否则会问你 'Do you really want to purge?' " }
+          ]
+        }
+      ],
+      "tips": [
+        "Build Cache 是最容易被忽略的，有时能占掉几 GB；它 100% 可回收，prune 它最安全。",
+        "`docker image prune -a` 会删掉所有没在使用的镜像，下次运行对应容器得重新 pull，网络慢的机器不要随便用。",
+        "`docker volume prune` 可能把你真正想留的数据删掉，删前先跑 `docker volume ls` 确认。",
+        "容器本身不占磁盘空间多，但容器的日志会不断增长；docker ps -a 看到一堆 Exited 的老容器可以放心 prune。",
+        "清理前先看 `docker system df` 的 RECLAIMABLE 列，别直接就上 prune -af。"
+      ]
+    },
+    {
+      "id": "docker-rmi",
+      "category": "docker",
+      "title": "docker rmi：删掉本地镜像",
+      "summary": "删镜像不会删容器也不会删数据卷；有容器在用这个镜像时删不掉，先把容器停掉或强制删除。",
+      "tags": ["Docker", "镜像", "删除", "清理"],
+      "updatedAt": "2026-11-03",
+      "content": "`docker rmi`（image remove，删掉镜像）和 `docker rm`（container remove，删容器）是**两条完全不同的命令**。\n\n## 先搞清楚谁是谁\n\n| 命令 | 删的是什么 | 删之前必须满足 |\n|---|---|---|\n| `docker rm` | 容器（运行实例） | 必须先 stop，或加 `-f` 强制删 |\n| `docker rmi` | 镜像（模板） | 没有任何容器正在使用它（含已退出的），或加 `-f` 强制删 |\n| `docker volume rm` | 数据卷 | 没有任何容器挂载它 |\n\n## 为什么删不掉？\n\n最常见的报错：\n\n```\nError response from daemon: conflict: unable to remove repository reference\n\"mysql:8.0\" (must force) - container b2d1cb1513bf is using its referenced image\nsha256:abc123...\n```\n\n意思是：**还有容器（包括已退出的）用这个镜像，你要删必须先删那个容器，或者加 `-f` 强制**。\n\n## 删除顺序\n\n```\n删镜像 → 看有没有容器在用 → 有就先 docker stop + docker rm 那个容器\n                                 → 再 docker rmi\n```\n\n或者省事点，直接：\n\n```bash\ndocker rmi -f mysql:8.0\n# 会自动把依赖这个镜像的容器也一起删掉\n```\n\n## 同一个镜像有多个 tag\n\n```\nREPOSITORY  TAG       IMAGE ID       CREATED      SIZE\nmysql       8.0       abc123...       2 weeks ago  512MB\nmysql       5.7       def456...       3 months ago 420MB\n```\n\n- `docker rmi mysql:5.7` —— 只删 5.7 这个 tag\n- `docker rmi mysql` —— 默认删 `mysql:latest`（如果有的话）\n- 要删所有 mysql 的 tag：`docker rmi $(docker images mysql -q | sort -u)`\n\n## 和 docker image rm 的关系\n\n`docker rmi` 是 `docker image rm` 的**简写**，两者完全等价。Docker 命令分「老短名」和「新分组名」两套，都能用：\n\n| 简写 | 等价完整名 |\n|---|---|\n| `docker ps` | `docker container ls` |\n| `docker run` | 无完整名 |\n| `docker images` | `docker image ls` |\n| `docker rmi` | `docker image rm` |\n| `docker rm` | `docker container rm` |\n\n新手用简写就行，等熟了看别人用完整名能认出来就够。",
+      "commands": [
+        {
+          "desc": "按镜像名+tag 删（你脑图里的写法，也是最常见的）",
+          "cmd": "docker rmi mysql:8.0",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "rmi", "desc": "image remove，删除镜像（不是容器）" },
+            { "token": "mysql:8.0", "desc": "REPOSITORY:TAG 形式；也可以直接写 IMAGE ID 的前几位" }
+          ]
+        },
+        {
+          "desc": "按镜像 ID 删（ID 前几位能唯一识别就行）",
+          "cmd": "docker rmi abc123",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "rmi", "desc": "删除镜像" },
+            { "token": "abc123", "desc": "IMAGE ID 的前几位（通常 6-12 位），够唯一就行" }
+          ]
+        },
+        {
+          "desc": "强制删镜像（同时自动删掉依赖它的容器）",
+          "cmd": "docker rmi -f mysql:8.0",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "rmi", "desc": "删除镜像" },
+            { "token": "-f", "desc": "force：强制删除，即使有容器在使用也一起干掉" },
+            { "token": "mysql:8.0", "desc": "目标镜像" }
+          ]
+        },
+        {
+          "desc": "删掉所有悬空镜像（IMAGE ID 为 <none> 的残留）",
+          "cmd": "docker rmi $(docker images -f dangling=true -q)",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "rmi", "desc": "删除镜像" },
+            { "token": "$(...)", "desc": "命令替换：括号里的结果作为参数传入" },
+            { "token": "docker images", "desc": "列出镜像" },
+            { "token": "-f dangling=true", "desc": "filter：只保留悬空镜像（没有 tag 的）" },
+            { "token": "-q", "desc": "quiet：只输出 ID" }
+          ]
+        },
+        {
+          "desc": "同时删多个镜像",
+          "cmd": "docker rmi mysql:8.0 redis:7 alpine",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "rmi", "desc": "删除镜像" },
+            { "token": "mysql:8.0 redis:7 alpine", "desc": "多个镜像名/ID 空格分隔，按左到右依次删除" }
+          ]
+        }
+      ],
+      "tips": [
+        "有容器在使用这个镜像时，rmi 会报 conflict；可以先 docker rm 那个容器，或直接加 -f 让 Docker 帮你一起删。",
+        "`docker rmi mysql`（不带 tag）默认操作 mysql:latest，不是所有 mysql 的 tag；想全删要单独指定。",
+        "镜像本身不占数据卷，删镜像不会影响 volume 里的数据；但删了再 run 同一镜像就得重新 pull。",
+        "`docker image prune` 只清悬空镜像，想清掉指定 tag 还是得 rmi。",
+        "简写和完整名都能用，保持自己习惯就行，关键是别把 rmi（镜像）和 rm（容器）搞反。"
+      ]
+    },
+    {
       "id": "docker-ps-real-output",
       "category": "docker",
       "title": "实战：docker ps -a 真实输出逐行解读",
