@@ -494,6 +494,94 @@ window.KNOWLEDGE_DATA =
       ]
     },
     {
+      "id": "nginx-reload",
+      "category": "proxy",
+      "title": "nginx -s reload：平滑重载配置",
+      "summary": "改完 nginx.conf 不用重启进程，发一个 reload 信号即可生效，已有连接不会断。",
+      "tags": ["Nginx", "reload", "配置生效"],
+      "updatedAt": "2026-11-03",
+      "content": "`nginx -s reload` 是**改完配置后让它生效**的标准动作。\n\n### 它做了什么\n\nNginx 是 master + worker 结构：\n\n```\nnginx -s reload\n   │\n   ├─ 给 master 进程发 HUP 信号\n   ├─ master 重新读取配置文件、检查语法\n   ├─ 启动一批新的 worker 进程（按新配置工作）\n   └─ 旧 worker 不再接新请求，把手上的请求处理完才退出\n```\n\n所以它叫**平滑重载**：\n- 用户正在进行的请求不会被掐断\n- 不需要停服务，不会有几十毫秒的空窗\n- 配置写错时 reload 会失败，**旧配置继续生效**，线上不会挂\n\n### 和 restart 的区别\n\n| 操作 | 连接 | 适用 |\n|---|---|---|\n| `nginx -s reload` | 不断，旧连接自然结束 | 改配置（99% 的情况） |\n| `systemctl restart nginx` / `nginx -s stop` + 启动 | 全部断开，进程重启 | 升级 Nginx 版本、更换编译模块 |\n\n### 标准操作顺序（不要直接 reload）\n\n```bash\nnginx -t && nginx -s reload\n```\n\n先 `-t` 测语法，通过了才 reload。习惯直接 reload 也行——写错它会拒绝加载，但你得去 error.log 里才发现问题，不如提前看。\n\n### `-s` 后面能跟的 4 个信号\n\n| 命令 | 含义 |\n|---|---|\n| `nginx -s reload` | 平滑重载配置（最常用） |\n| `nginx -s quit` | 优雅退出：处理完当前请求再停 |\n| `nginx -s stop` | 快速退出：立即停，不等请求 |\n| `nginx -s reopen` | 重新打开日志文件（日志切割后必做） |\n\n> `-s` 是 signal 的缩写。它本质是读 `nginx.pid` 拿到 master 进程号，再 `kill -HUP <pid>`。所以如果 pid 文件路径不对，会报 `nginx: [error] open() \"/run/nginx.pid\" failed`。\n\n### 日志切割后为什么必须 reopen\n\n日志文件被 `mv access.log access.log.1` 后，Nginx 仍握着旧文件的句柄，新日志会继续写进改名后的文件。发 `nginx -s reopen` 才会重新打开并创建新的 `access.log`。\n\n### reload 之后怎么确认生效\n\n```bash\nnginx -T | grep -A 3 \"server_name your.domain\"   # 看最终生效的配置\nps -ef | grep nginx                              # 看 worker 是否换了新进程\ntail -f /usr/local/nginx/logs/error.log           # 看有没有报错\n```",
+      "commands": [
+        {
+          "desc": "平滑重载配置（你贴的命令）",
+          "cmd": "nginx -s reload",
+          "parts": [
+            { "token": "nginx", "desc": "Nginx 可执行程序，用绝对路径也行（如 /usr/local/nginx/sbin/nginx）" },
+            { "token": "-s", "desc": "signal，给运行中的 master 进程发信号" },
+            { "token": "reload", "desc": "重载：重新读配置、启新 worker、旧 worker 处理完退出" }
+          ]
+        },
+        {
+          "desc": "推荐写法：先测语法，通过才重载",
+          "cmd": "nginx -t && nginx -s reload",
+          "parts": [
+            { "token": "nginx", "desc": "Nginx 可执行程序" },
+            { "token": "-t", "desc": "test：只检查配置语法，不生效" },
+            { "token": "&&", "desc": "逻辑与：前一条成功才执行后一条，语法错就不 reload" },
+            { "token": "nginx", "desc": "Nginx 可执行程序" },
+            { "token": "-s", "desc": "signal，发信号给 master" },
+            { "token": "reload", "desc": "平滑重载配置" }
+          ]
+        },
+        {
+          "desc": "优雅退出（处理完当前请求再停）",
+          "cmd": "nginx -s quit",
+          "parts": [
+            { "token": "nginx", "desc": "Nginx 可执行程序" },
+            { "token": "-s", "desc": "signal，发信号" },
+            { "token": "quit", "desc": "优雅停止：不再接新请求，手上的请求处理完才退出" }
+          ]
+        },
+        {
+          "desc": "快速停止（不等请求）",
+          "cmd": "nginx -s stop",
+          "parts": [
+            { "token": "nginx", "desc": "Nginx 可执行程序" },
+            { "token": "-s", "desc": "signal，发信号" },
+            { "token": "stop", "desc": "快速停止：立即结束所有 worker，正在处理的请求会被中断" }
+          ]
+        },
+        {
+          "desc": "日志切割后重新打开日志文件",
+          "cmd": "nginx -s reopen",
+          "parts": [
+            { "token": "nginx", "desc": "Nginx 可执行程序" },
+            { "token": "-s", "desc": "signal，发信号" },
+            { "token": "reopen", "desc": "重新打开日志文件，配合日志切割（mv access.log）使用" }
+          ]
+        },
+        {
+          "desc": "用 systemd 管理的服务器这样写",
+          "cmd": "sudo systemctl reload nginx",
+          "parts": [
+            { "token": "sudo", "desc": "以 root 权限执行，Nginx 需要权限操作 pid 文件" },
+            { "token": "systemctl", "desc": "systemd 服务管理命令" },
+            { "token": "reload", "desc": "让服务重新加载配置（内部等价于 nginx -s reload）" },
+            { "token": "nginx", "desc": "服务名" }
+          ]
+        },
+        {
+          "desc": "确认 worker 进程换新的了",
+          "cmd": "ps -ef | grep nginx",
+          "parts": [
+            { "token": "ps", "desc": "查看进程" },
+            { "token": "-ef", "desc": "显示所有进程的完整信息（e=全部，f=完整格式）" },
+            { "token": "|", "desc": "管道，把输出交给 grep" },
+            { "token": "grep nginx", "desc": "过滤出 Nginx 相关进程，master 和 worker 都在" }
+          ]
+        }
+      ],
+      "tips": [
+        "reload 是平滑的，restart 是断连的；改配置一律用 reload，只有升级 Nginx 本身才 restart。",
+        "配置写错时 reload 会失败并保留旧配置继续服务，所以线上不会因为手滑 reload 而挂掉，但一定要看 error.log 确认。",
+        "改了 `conf.d/xxx.conf` 却怎么 reload 都不生效，先 `nginx -T` 确认那份文件真的被主配置 `include` 了。",
+        "reload 后 master 进程 PID 不变，worker 进程 PID 会变；`ps -ef | grep nginx` 看到多组 PID 是正常的过渡状态。",
+        "日志切割（把 access.log 改名）之后必须 `nginx -s reopen`，否则新日志还是写进旧文件。",
+        "报 `open() \"/run/nginx.pid\" failed` 说明 Nginx 根本没在跑，或者 pid 路径与配置里的 `pid` 指令不一致。",
+        "非 root 用户执行需要 sudo，否则没有权限给 master 进程发信号。"
+      ]
+    },
+    {
       "id": "deploy-mv-build",
       "category": "deploy",
       "title": "mv 覆盖更新静态资源（build 目录搬家）",
