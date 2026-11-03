@@ -1497,6 +1497,64 @@ window.KNOWLEDGE_DATA =
       ]
     },
     {
+      "id": "docker-layer-pyramid",
+      "category": "docker",
+      "title": "Docker 站在哪一层：硬件 → Win10 → VMware → CentOS → Docker → 容器",
+      "summary": "从笔记本硬件到容器共 6 层，只有 VMware 那层是虚拟化；Docker 只是进程隔离，容器和宿主机共用同一个内核。",
+      "tags": ["Docker", "虚拟机", "内核", "概念", "嵌套"],
+      "updatedAt": "2026-11-03",
+      "content": "这张金字塔图从上到下画的是「容器到底跑在哪」：\n\n```\n           ▲  ┌──────────────────┐\n           │  │   CentOS 7.5     │  ← 容器（你 docker run 起来的东西）\n           │  ├──────────────────┤\n           │  │     Docker       │  ← 容器引擎，管镜像和容器\n           │  ├──────────────────┤\n           │  │    CentOS 7      │  ← 虚拟机里的操作系统，容器的「宿主机」\n           │  ├──────────────────┤\n           │  │     VMware       │  ← 虚拟机软件（Hypervisor），真·虚拟化就在这层\n           │  ├──────────────────┤\n           │  │     Win10        │  ← 你笔记本的操作系统\n           ▼  ├──────────────────┤\n              │    笔记本硬件      │  ← CPU / 内存 / 硬盘\n              └──────────────────┘\n```\n\n## 逐层拆解\n\n| 层 | 是什么 | 谁在管谁 |\n|---|---|---|\n| 笔记本硬件 | 物理 CPU、内存、磁盘 | 最底层，所有东西最终都跑在它上面 |\n| Win10 | 物理机的操作系统 | 直接调度硬件，提供 VMware 运行的环境 |\n| VMware | 虚拟机软件（Hypervisor） | 在 Win10 上切出一块虚拟硬件，给里面的系统用 |\n| CentOS 7 | 虚拟机里装的完整 Linux | 拥有自己的内核 + 文件系统 + 全套环境 |\n| Docker | 装在这个 CentOS 7 上的容器引擎 | 不虚拟硬件，只做「进程隔离 + 文件系统打包」 |\n| CentOS 7.5 | 容器里的用户空间 | 没有自己的内核，借用 CentOS 7 的内核跑 |\n\n## 三个必须理解的点\n\n### ① 只有 VMware 那层是真的「虚拟化」\n\n虚拟机（VMware）模拟出一整套硬件：假 CPU、假内存、假网卡，然后在里面装一个**完整操作系统**——包含它自己的内核。所以虚拟机启动像真机开机，几十秒到几分钟，体积几个 GB。\n\nDocker 什么都不模拟。它只是把进程关进一个「笼子」（Namespace + cgroups），笼子里看到独立的文件系统、独立的进程列表、独立的网络，但**内核只有一个**——就是外面 CentOS 7 的那个。所以容器启动是秒级，镜像几百 MB 起。\n\n### ② 容器共享内核，这一点有办法直接验证\n\n```bash\ndocker run --rm centos:7.5 uname -r\n```\n\n输出的是**外面 CentOS 7 的内核版本**，不是 CentOS 7.5 的。因为容器里压根没有内核，`uname` 读的是宿主机的。\n\n这也是为什么：\n\n- 容器里装不了内核、改不了内核参数（少数 sysctl 可以，多数被禁）\n- Linux 上跑的镜像不能直接拿到 Windows 上跑（Windows 内核不认 Linux 的那套调用）\n- Docker Desktop 在 Windows 上必须套一层 WSL2 —— 因为要有个真 Linux 内核\n\n### ③ 嵌套有性能代价\n\n你图中这个结构是「Win10 → VMware → Docker」，等于虚拟化指令要穿透好几层。日常练习没问题，但生产环境不会这么搭：\n\n| 部署方式 | 层级 | 说明 |\n|---|---|---|\n| 练习环境（你当前这样） | 硬件 → Win10 → VMware → CentOS → Docker | 方便在 Windows 上练 Linux，性能有损耗 |\n| 云服务器 | 物理机 → 云平台（VM）→ Docker | 主流做法，云主机本来就是虚拟机 |\n| 物理机自建 | 硬件 → Linux → Docker | 性能最好，公司自建机房常见 |\n| Windows 本机 | Win10 → WSL2（轻量 VM）→ Docker | Docker Desktop 的路子，比 VMware 轻，但本质也是套了一层 |\n\n## 和「Docker Desktop」的关系\n\nDocker Desktop 的结构和你这张图是一个思路，只是更轻：\n\n```\nWin10 → WSL2（微软自带的轻量 Linux 虚拟机）→ Docker → 容器\n```\n\n所以你上次 `docker system df` 里看到的磁盘占用，才会落在 WSL2 的 vhdx 文件里——因为 Docker 容器实际跑在那个 WSL2 虚拟机内。\n\n## 一句话总结\n\n> **虚拟机是「造一台假电脑再装系统」，Docker 是「给进程圈一块地」**。金字塔上面两层（CentOS 7.5 容器）之所以这么薄，是因为它借用了下面 CentOS 7 的内核。",
+      "commands": [
+        {
+          "desc": "在宿主机（CentOS 7）上看内核版本",
+          "cmd": "uname -r",
+          "parts": [
+            { "token": "uname", "desc": "Unix name，输出系统信息" },
+            { "token": "-r", "desc": "release，只看内核版本号，如 3.10.0-1160.el7.x86_64" }
+          ]
+        },
+        {
+          "desc": "在容器里跑同一条命令，对比输出（会发现版本一模一样）",
+          "cmd": "docker run --rm centos:7.5 uname -r",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "run", "desc": "创建并启动一个容器" },
+            { "token": "--rm", "desc": "容器退出后自动删除，不留垃圾容器" },
+            { "token": "centos:7.5", "desc": "镜像名 + 标签，容器里的「用户空间」版本" },
+            { "token": "uname -r", "desc": "在容器内部执行的命令，读到的却是宿主机内核" }
+          ]
+        },
+        {
+          "desc": "看 Docker 记录的宿主机内核版本",
+          "cmd": "docker info | grep -i kernel",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "info", "desc": "输出 Docker 守护进程的完整环境信息" },
+            { "token": "|", "desc": "管道，把前一条命令的输出交给后一条处理" },
+            { "token": "grep", "desc": "按关键词过滤行" },
+            { "token": "-i", "desc": "ignore case，忽略大小写" },
+            { "token": "kernel", "desc": "要匹配的关键词，这里找 Kernel Version 那一行" }
+          ]
+        },
+        {
+          "desc": "看客户端和服务端各自的版本（服务端就跑在 WSL2 / CentOS 里）",
+          "cmd": "docker version",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具（客户端）" },
+            { "token": "version", "desc": "同时显示 Client（你敲命令的这头）和 Server（真正干活的 daemon）" }
+          ]
+        }
+      ],
+      "tips": [
+        "容器里执行 `uname -a` 看到的还是宿主机内核，这是「共享内核」最直接的证据；别指望容器里能装内核。",
+        "镜像标签 `centos:7.5` 指的是用户空间版本（文件系统、库、命令），不代表内核版本。",
+        "Docker 不是「轻量虚拟机」。它没有自己的内核，只是把进程关进 Namespace + cgroups 的笼子里。",
+        "VMware 里套 Docker 属于嵌套虚拟化，CPU 指令要穿透多层，练习够用，生产别这么搭。",
+        "Windows 上 Docker Desktop 走的 WSL2 也是同一思路：先有一个轻量 Linux 虚拟机，再在里面跑 Docker。",
+        "`docker info` 里的 Kernel Version 是宿主机的，不是镜像的；想知道镜像里装了哪些软件，进容器 `cat /etc/os-release` 看。"
+      ]
+    },
+    {
       "id": "docker-command-cheatsheet",
       "category": "docker",
       "title": "Docker 核心命令速查表（高频到进阶）",
