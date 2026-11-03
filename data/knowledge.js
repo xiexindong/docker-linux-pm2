@@ -1239,6 +1239,82 @@ window.KNOWLEDGE_DATA =
       ]
     },
     {
+      "id": "docker-start-stop-restart",
+      "category": "docker",
+      "title": "docker start / stop / restart：容器开关机",
+      "summary": "操作的是**已存在的容器**，不会新建也不会删除；start 拉起、stop 优雅停止、restart 重启。",
+      "tags": ["Docker", "生命周期", "容器"],
+      "updatedAt": "2026-11-03",
+      "content": "这三个命令都在操作**同一个已存在的容器**，只是状态不同。\n\n### 一张图理解\n\n```\n                 docker start\n  Exited ────────────────────────> Up\n     ^                              │\n     │  docker stop                 │ docker restart\n     └──────────────────────────────┤\n                                    │\n                                    └──> Up（先停再起）\n```\n\n### 三个命令的区别\n\n| 命令 | 从什么状态 | 变成什么状态 | 会不会丢数据 |\n|---|---|---|---|\n| `docker start` | Exited / Created | Up（运行中） | 不丢，容器的卷和文件系统都还在 |\n| `docker stop` | Up | Exited（退出码 0，正常停止） | 不丢，只是进程停了 |\n| `docker restart` | Up / Exited | 先 Exited 再 Up | 不丢，等于 stop + start |\n\n### 和你熟悉的命令对照\n\n| Docker | 类比 |\n|---|---|\n| `docker run` | 新买一台电脑开机（每次都新建） |\n| `docker start` | 给关机了的旧电脑按电源键 |\n| `docker stop` | 正常点“关机” |\n| `docker restart` | 点“重启” |\n| `docker kill` | 直接拔电源 |\n\n### stop 内部做了什么（重要）\n\n1. 给容器里的主进程（PID 1）发 `SIGTERM` —— 相当于礼貌地通知“请退出”\n2. 等 **10 秒**（默认，可用 `-t` 改）\n3. 10 秒还没退，补发 `SIGKILL` —— 直接强杀\n\n所以 `docker stop` 是**优雅停止**：应用有机会把缓存刷盘、连接关掉。`docker kill` 是直接 `SIGKILL`，跳过第 1、2 步。\n\n> 这就是为什么你的日志里偶尔出现退出码 **137**：137 = 128+9，表示被 SIGKILL 杀掉，说明 stop 等了 10 秒没停住，被强杀了。\n\n### restart 什么时候用\n\n- 改了容器里的配置（如 Nginx 的 conf）后让进程重新读配置\n- 容器状态异常（进程假死、连不上）\n- **注意**：restart 不会重新应用 `docker run` 时的参数；想改端口、挂载、环境变量必须删了重新 `run`\n\n### 一次操作多个容器\n\n```bash\ndocker start milvus-etcd minio-minio milvus-standalone\ndocker stop my-nginx my-redis\n```\n\n容器名之间用空格分隔，按从左到右的顺序执行。",
+      "commands": [
+        {
+          "desc": "启动已停止的容器（你贴的第一条）",
+          "cmd": "docker start <容器名>",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "start", "desc": "启动一个已存在的容器（不是新建，所以和 run 完全不同）" },
+            { "token": "<容器名>", "desc": "容器名或容器 ID，用 docker ps -a 查" }
+          ]
+        },
+        {
+          "desc": "停止运行中的容器（你贴的第二条）",
+          "cmd": "docker stop <容器名>",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "stop", "desc": "优雅停止：先发 SIGTERM，等 10 秒后仍未退出才发 SIGKILL" },
+            { "token": "<容器名>", "desc": "容器名或容器 ID" }
+          ]
+        },
+        {
+          "desc": "重启容器（你贴的第三条）",
+          "cmd": "docker restart <容器名>",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "restart", "desc": "停止后立即再启动，等于 stop + start；容器参数不变" },
+            { "token": "<容器名>", "desc": "容器名或容器 ID" }
+          ]
+        },
+        {
+          "desc": "改等待时间：只等 3 秒就强杀",
+          "cmd": "docker stop -t 3 <容器名>",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "stop", "desc": "停止容器" },
+            { "token": "-t 3", "desc": "timeout：等待 3 秒（默认 10 秒），超时后发 SIGKILL" },
+            { "token": "<容器名>", "desc": "目标容器" }
+          ]
+        },
+        {
+          "desc": "强制立即杀掉（不等优雅退出）",
+          "cmd": "docker kill <容器名>",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "kill", "desc": "直接对主进程发 SIGKILL，不等待；可能丢未落盘的数据" },
+            { "token": "<容器名>", "desc": "目标容器" }
+          ]
+        },
+        {
+          "desc": "启动并接入终端（前台容器用）",
+          "cmd": "docker start -ai <容器名>",
+          "parts": [
+            { "token": "docker", "desc": "Docker 命令行工具" },
+            { "token": "start", "desc": "启动已存在的容器" },
+            { "token": "-a", "desc": "attach：把容器输出接到当前终端" },
+            { "token": "-i", "desc": "interactive：保持标准输入打开，可以交互" },
+            { "token": "<容器名>", "desc": "目标容器，比如之前用 run -it ubuntu bash 创建的" }
+          ]
+        }
+      ],
+      "tips": [
+        "`docker start` 只对**已存在**的容器有效；容器被 `docker rm` 删了就彻底没了，只能重新 run。",
+        "`restart` 不会重新加载 `docker run` 时的参数：想改端口/挂载/环境变量，必须 `docker rm` 后重新 run。",
+        "停止后容器还在（`docker ps -a` 能看到），磁盘空间也被占着；确认不要了再 `docker rm`。",
+        "`docker stop` 默认等 10 秒；应用启动慢、退出慢时，日志里出现 137 通常就是被超时强杀了。",
+        "配了 `--restart always`（或 `unless-stopped`）的容器，Docker 重启或机器重启后会自动拉起，不需要手动 start。",
+        "批量操作时容器名可以一次写多个：`docker start a b c`，按顺序启动。"
+      ]
+    },
+    {
       "id": "docker-exec",
       "category": "docker",
       "title": "docker exec -it：进入运行中的容器",
