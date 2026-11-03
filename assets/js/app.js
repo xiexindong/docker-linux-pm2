@@ -465,6 +465,94 @@
     });
   }
 
+  /* ---------------- 详情抽屉宽度拖拽 ---------------- */
+
+  var DRAWER_WIDTH_KEY = 'knowledge.drawerWidth';
+  var DRAWER_MIN_WIDTH = 360;
+  var DRAWER_MOBILE_BREAK = 720;
+
+  function isMobileViewport() {
+    return window.innerWidth <= DRAWER_MOBILE_BREAK;
+  }
+
+  function setDrawerWidth(width) {
+    var $drawer = $('#drawer');
+    if (!width || isMobileViewport()) {
+      $drawer.css('width', '');
+      return;
+    }
+    var maxWidth = Math.max(DRAWER_MIN_WIDTH, window.innerWidth - 56);
+    $drawer.css('width', Math.round(Math.min(Math.max(width, DRAWER_MIN_WIDTH), maxWidth)) + 'px');
+  }
+
+  function initDrawerResizer() {
+    var $drawer = $('#drawer');
+    var $handle = $('#drawerResizer');
+    if (!$handle.length || !$drawer.length) {
+      return;
+    }
+
+    var stored = NaN;
+    try {
+      stored = parseFloat(window.localStorage.getItem(DRAWER_WIDTH_KEY));
+    } catch (e) { /* 隐私模式下 localStorage 可能不可用 */ }
+    if (!isNaN(stored)) {
+      setDrawerWidth(stored);
+    }
+
+    var dragging = false;
+    var startX = 0;
+    var startWidth = 0;
+
+    $handle.on('pointerdown', function (event) {
+      if (isMobileViewport()) {
+        return;
+      }
+      if (event.pointerType === 'mouse' && event.button !== 0) {
+        return;
+      }
+      dragging = true;
+      startX = event.clientX;
+      startWidth = $drawer.outerWidth();
+      $('body').addClass('drawer-resizing');
+      if ($handle[0].setPointerCapture) {
+        $handle[0].setPointerCapture(event.pointerId);
+      }
+      event.preventDefault();
+    });
+
+    $(document).on('pointermove', function (event) {
+      if (!dragging) {
+        return;
+      }
+      setDrawerWidth(startWidth + (startX - event.clientX));
+      event.preventDefault();
+    });
+
+    $(document).on('pointerup pointercancel', function () {
+      if (!dragging) {
+        return;
+      }
+      dragging = false;
+      $('body').removeClass('drawer-resizing');
+      try {
+        window.localStorage.setItem(DRAWER_WIDTH_KEY, String($drawer.outerWidth()));
+      } catch (e) { /* 存不下就算了，不影响使用 */ }
+    });
+
+    $handle.on('dblclick', function () {
+      try {
+        window.localStorage.removeItem(DRAWER_WIDTH_KEY);
+      } catch (e) { /* 同上 */ }
+      setDrawerWidth(0);
+    });
+
+    $(window).on('resize', function () {
+      var inline = parseFloat($drawer[0].style.width);
+      setDrawerWidth(isNaN(inline) ? 0 : inline);
+    });
+  }
+
   /* ---------------- 初始化 ---------------- */
 
   function init(data) {
@@ -481,6 +569,7 @@
     renderNav();
     renderRecent();
     render();
+    initDrawerResizer();
   }
 
   function showLoadError() {

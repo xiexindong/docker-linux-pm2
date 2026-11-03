@@ -542,6 +542,45 @@ mark {
   transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* 左侧拖拽把手：调整抽屉宽度 */
+.drawer-resizer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 60;
+  width: 10px;
+  height: 100%;
+  transform: translateX(-5px);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.drawer-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 4px;
+  height: 100%;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.drawer-resizer:hover::after,
+body.drawer-resizing .drawer-resizer::after {
+  background: rgba(99, 102, 241, 0.5);
+}
+
+body.drawer-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.drawer-resizing .drawer {
+  transition: none;
+}
+
 .drawer.open {
   transform: translateX(0);
 }
@@ -914,6 +953,10 @@ mark {
 
   .drawer {
     width: 100%;
+  }
+
+  .drawer-resizer {
+    display: none;
   }
 
   .related-list {
