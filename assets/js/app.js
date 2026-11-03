@@ -218,42 +218,174 @@
   /* ---------------- 详情抽屉 ---------------- */
 
   function inlineMarkdown(text) {
-    return escapeHtml(text)
-      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      .replace(/`([^`]+)`/g, '<code>$1</code>');
+    return String(text).split(/(`[^`]*`)/).map(function (part) {
+      if (part.length > 1 && part.charAt(0) === '`' && part.charAt(part.length - 1) === '`') {
+        return '<code>' + escapeHtml(part.slice(1, -1)) + '</code>';
+      }
+      return escapeHtml(part)
+        .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    }).join('');
   }
 
-  function renderTextBlocks(text) {
-    return String(text).split(/\n{2,}/).map(function (block) {
-      var lines = block.split('\n').filter(function (line) {
-        return $.trim(line).length > 0;
+  function isTableSeparator(line) {
+    return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line);
+  }
+
+  function isTableStart(lines, index) {
+    return lines[index].indexOf('|') !== -1 &&
+      index + 1 < lines.length &&
+      isTableSeparator(lines[index + 1]);
+  }
+
+  function splitTableRow(line) {
+    return String(line)
+      .replace(/^\s*\|/, '')
+      .replace(/\|\s*$/, '')
+      .split('|')
+      .map(function (cell) { return $.trim(cell); });
+  }
+
+  function renderTable(lines, start) {
+    var rows = [];
+    var index = start;
+    while (index < lines.length && $.trim(lines[index]) && lines[index].indexOf('|') !== -1) {
+      rows.push(lines[index]);
+      index++;
+    }
+    var head = splitTableRow(rows[0]);
+    var html = '<div class="md-table-wrap"><table class="md-table"><thead><tr>';
+    head.forEach(function (cell) {
+      html += '<th>' + inlineMarkdown(cell) + '</th>';
+    });
+    html += '</tr></thead><tbody>';
+    rows.slice(2).forEach(function (row) {
+      html += '<tr>';
+      splitTableRow(row).forEach(function (cell) {
+        html += '<td>' + inlineMarkdown(cell) + '</td>';
       });
-      if (!lines.length) {
-        return '';
+      html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+    return { html: html, next: index };
+  }
+
+  function renderList(lines, start) {
+    var ordered = /^\s*\d+\.\s+/.test(lines[start]);
+    var items = [];
+    var index = start;
+    while (index < lines.length) {
+      var match = lines[index].match(/^\s*(?:-|\*|\d+\.)\s+(.*)$/);
+      if (!match) {
+        break;
       }
-      var isList = lines.every(function (line) {
-        return /^\s*-\s+/.test(line);
-      });
-      if (isList) {
-        return '<ul>' + lines.map(function (line) {
-          return '<li>' + inlineMarkdown(line.replace(/^\s*-\s+/, '')) + '</li>';
-        }).join('') + '</ul>';
+      if (/^\s*\d+\.\s+/.test(lines[index]) !== ordered) {
+        break;
       }
-      return '<p>' + inlineMarkdown(lines.join('\n')).replace(/\n/g, '<br>') + '</p>';
-    }).join('');
+      items.push('<li>' + inlineMarkdown($.trim(match[1])) + '</li>');
+      index++;
+    }
+    var tag = ordered ? 'ol' : 'ul';
+    return { html: '<' + tag + '>' + items.join('') + '</' + tag + '>', next: index };
+  }
+
+  function startsBlock(line) {
+    return /^\s*```/.test(line) ||
+      /^\s*#{1,6}\s+/.test(line) ||
+      /^\s*>/.test(line) ||
+      /^\s*(?:-|\*|\d+\.)\s+/.test(line) ||
+      /^\s*(?:---|___|\*\*\*)\s*$/.test(line);
   }
 
   function renderMarkdown(text) {
     if (!text) {
       return '';
     }
-    return String(text).split(/```/).map(function (part, index) {
-      if (index % 2 === 1) {
-        var code = part.replace(/^\n+/, '').replace(/^[a-zA-Z0-9_+-]*\n/, '').replace(/\n+$/, '');
-        return '<pre class="md-code">' + escapeHtml(code) + '</pre>';
+
+    var lines = String(text).replace(/\r\n/g, '\n').split('\n');
+    var html = [];
+    var index = 0;
+
+    while (index < lines.length) {
+      var line = lines[index];
+
+      // 代码块
+      if (/^\s*```/.test(line)) {
+        var code = [];
+        index++;
+        while (index < lines.length && !/^\s*```/.test(lines[index])) {
+          code.push(lines[index]);
+          index++;
+        }
+        index++;
+        html.push('<pre class="md-code">' + escapeHtml(code.join('\n')) + '</pre>');
+        continue;
       }
-      return renderTextBlocks(part);
-    }).join('');
+
+      if (!$.trim(line)) {
+        index++;
+        continue;
+      }
+
+      // 表格
+      if (isTableStart(lines, index)) {
+        var table = renderTable(lines, index);
+        html.push(table.html);
+        index = table.next;
+        continue;
+      }
+
+      // 标题：原文 # 映射为 h2，逐级向下，最多到 h4
+      var heading = line.match(/^(#{1,6})\s+(.*)$/);
+      if (heading) {
+        var level = Math.min(heading[1].length + 1, 4);
+        html.push('<h' + level + '>' + inlineMarkdown($.trim(heading[2])) + '</h' + level + '>');
+        index++;
+        continue;
+      }
+
+      // 分割线
+      if (/^\s*(?:---|___|\*\*\*)\s*$/.test(line)) {
+        html.push('<hr>');
+        index++;
+        continue;
+      }
+
+      // 引用块
+      if (/^\s*>\s?/.test(line)) {
+        var quote = [];
+        while (index < lines.length && /^\s*>\s?/.test(lines[index])) {
+          quote.push(lines[index].replace(/^\s*>\s?/, ''));
+          index++;
+        }
+        html.push('<blockquote>' + renderMarkdown(quote.join('\n')) + '</blockquote>');
+        continue;
+      }
+
+      // 列表
+      if (/^\s*(?:-|\*|\d+\.)\s+/.test(line)) {
+        var list = renderList(lines, index);
+        html.push(list.html);
+        index = list.next;
+        continue;
+      }
+
+      // 普通段落
+      var paragraph = [];
+      while (index < lines.length && $.trim(lines[index]) &&
+        !startsBlock(lines[index]) && !isTableStart(lines, index)) {
+        paragraph.push($.trim(lines[index]));
+        index++;
+      }
+      if (!paragraph.length) {
+        index++;
+        continue;
+      }
+      html.push('<p>' + inlineMarkdown(paragraph.join('\n')).replace(/\n/g, '<br>') + '</p>');
+    }
+
+    return html.join('');
   }
 
   function relatedEntries(entry) {
@@ -338,6 +470,45 @@
     $('#drawer, #drawerMask').removeClass('open');
     $('#drawer').attr('aria-hidden', 'true');
     $('body').removeClass('drawer-open');
+  }
+
+  /* ---------------- 查看本地 Markdown 文件 ---------------- */
+
+  function openDocDrawer(fileName, markdown) {
+    var text = String(markdown || '');
+    var lineCount = text ? text.split('\n').length : 0;
+
+    $('#drawerCategory').text('MD 文档');
+    $('#drawerTitle').text(fileName);
+    $('#drawerMeta').html(
+      '<span>' + lineCount + ' 行</span>' +
+      '<span class="dot"></span>' +
+      '<span>' + text.length + ' 字符</span>'
+    );
+
+    $('#drawerBody').html('<div class="md-content">' + renderMarkdown(text) + '</div>').scrollTop(0);
+    $('#drawer, #drawerMask').addClass('open');
+    $('#drawer').attr('aria-hidden', 'false');
+    $('body').addClass('drawer-open');
+  }
+
+  function readMarkdownFile(file) {
+    if (!file) {
+      return;
+    }
+    if (!/\.(md|markdown|txt)$/i.test(file.name)) {
+      toast('只支持 .md / .markdown / .txt 文件');
+      return;
+    }
+
+    var reader = new FileReader();
+    reader.onload = function () {
+      openDocDrawer(file.name, reader.result || '');
+    };
+    reader.onerror = function () {
+      toast('文件读取失败，请换个文件试试');
+    };
+    reader.readAsText(file, 'utf-8');
   }
 
   /* ---------------- 复制与提示 ---------------- */
@@ -441,6 +612,31 @@
       $('#searchInput').val('');
       renderNav();
       render();
+    });
+
+    $('#openMdBtn').on('click', function () {
+      $('#mdFileInput').trigger('click');
+    });
+
+    $('#mdFileInput').on('change', function () {
+      readMarkdownFile(this.files && this.files[0]);
+      this.value = '';
+    });
+
+    $(document).on('dragover', function (event) {
+      var dataTransfer = event.originalEvent && event.originalEvent.dataTransfer;
+      if (dataTransfer && dataTransfer.types && dataTransfer.types.indexOf('Files') !== -1) {
+        event.preventDefault();
+      }
+    });
+
+    $(document).on('drop', function (event) {
+      var dataTransfer = event.originalEvent && event.originalEvent.dataTransfer;
+      if (!dataTransfer || !dataTransfer.files || !dataTransfer.files.length) {
+        return;
+      }
+      event.preventDefault();
+      readMarkdownFile(dataTransfer.files[0]);
     });
 
     $(document).on('keydown', function (event) {
