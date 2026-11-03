@@ -11,7 +11,8 @@ window.KNOWLEDGE_DATA =
     { "id": "proxy", "name": "代理与转发", "desc": "正向/反向代理、Nginx 与端口转发" },
     { "id": "ops", "name": "服务器排查", "desc": "端口、负载、内存、日志与定时任务" },
     { "id": "deploy", "name": "发布部署", "desc": "发版流程、回滚策略与环境切换" },
-    { "id": "docker", "name": "Docker", "desc": "镜像、容器与隔离环境" }
+    { "id": "docker", "name": "Docker", "desc": "镜像、容器与隔离环境" },
+    { "id": "nginx", "name": "Nginx 基础", "desc": "最小可用配置、location 匹配与请求转发" }
   ],
   "entries": [
     {
@@ -1649,6 +1650,133 @@ window.KNOWLEDGE_DATA =
         "如果 Docker 版本较新（20.10+），可以用 `docker compose`（空格）而不是 `docker-compose`（连字符），功能一样。",
         "用 `build: .` 替代 `image:` 时，compose 会先构建再启动；改了 Dockerfile 后要重建用 `docker-compose up -d --build`。",
         "环境变量除了写在 yaml 里，也可以放在 `.env` 文件，compose 会自动读，方便本地开发时改密码不提交到 git。"
+      ]
+    },
+    {
+      "id": "nginx-minimal-config",
+      "category": "nginx",
+      "title": "最小可用 Nginx 配置：一行一行讲明白",
+      "summary": "一个 server 块同时做两件事：普通页面自己发文件，/api/ 开头的请求转给 Node 后端。每个参数都配白话解释和设置理由。",
+      "tags": ["Nginx", "基础配置", "server", "proxy_pass"],
+      "updatedAt": "2026-11-03",
+      "content": "Nginx 最基础的用法只做一件事：**把浏览器的请求接住，再决定是自己发文件，还是转给后端程序。**\n\n## 一、最小可用配置（复制就能跑）\n\n```nginx\nserver {\n    listen 80;\n    server_name example.com;\n\n    location / {\n        root /usr/local/apps/www;\n        index index.html;\n        try_files $uri $uri/ /index.html;\n    }\n\n    location /api/ {\n        proxy_pass http://127.0.0.1:3000/;\n        proxy_set_header Host $http_host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n    }\n}\n```\n\n这段配置干两件事：\n- 访问 `http://example.com/`、`/about` → 从本地磁盘读文件\n- 访问 `http://example.com/api/user` → 转给本机 3000 端口上的 Node\n\n## 二、逐行解释（重点看「为什么」）\n\n| 指令 | 白话解释 | 为什么这么设 / 不设会怎样 |\n|---|---|---|\n| `server { }` | 一个「虚拟主机」，相当于一栋楼的一个门面 | 一个 Nginx 可以同时托管多个网站，每个域名一个 server 块 |\n| `listen 80` | 守着 80 端口等请求 | 80 是 HTTP 的默认端口，浏览器输 `http://` 自动连这里。不写就没有入口，Nginx 启动报错 |\n| `server_name example.com` | 认门牌号：只有访问这个域名才走这个块 | 同一台服务器可能挂多个站，靠请求头里的 Host 区分。不写的话它会变成「默认块」，任何域名都落到它身上 |\n| `location / { }` | 路径匹配规则：`/` 是兜底，所有请求都会先命中它 | 写一个 `/` 就把「除特殊规则外的所有请求」都交给它处理，保证不会有请求没人管 |\n| `root /usr/local/apps/www` | 文件从哪个目录取 | 访问 `/logo.png` 实际读 `/usr/local/apps/www/logo.png`。**必须写绝对路径**：相对路径是相对 Nginx 安装目录，很容易找错文件 |\n| `index index.html` | 访问「目录本身」时默认给哪个文件 | 访问 `/` 时，Nginx 不知道给什么，就按这里的顺序找 index.html。不写会列出目录或 403 |\n| `try_files $uri $uri/ /index.html` | 依次尝试：先找同名文件，再找同名目录，都没有就返回 index.html | Vue/React 的 `/about`、`/user/1` 这些路由在磁盘上没有对应文件，必须兜底到 index.html 交给前端 JS 渲染，否则直接 404 |\n| `location /api/ { }` | 只拦截 `/api/` 开头的请求 | 前缀匹配且比 `/` 更长，Nginx 选最长匹配，所以接口请求不会跑去读静态文件 |\n| `proxy_pass http://127.0.0.1:3000/` | 把请求转给本机 3000 端口的程序 | 用 `127.0.0.1` 而不是 `localhost`：`localhost` 可能被解析成 IPv6 的 `::1`，后端只监听 IPv4 就会 502 |\n| （`proxy_pass` 末尾的 `/`） | 决定「要不要剥掉 `/api` 前缀」 | 带 `/`：`/api/user` 转过去变成 `/user`；不带 `/`：原样转 `/api/user`。后端路由一般不写 `/api`，所以要带 |\n| `proxy_set_header Host $http_host` | 把浏览器访问的原始域名带给后端 | 不传的话后端收到的是 `Host: 127.0.0.1:3000`，生成绝对链接、做重定向时会指到错误地址 |\n| `proxy_set_header X-Real-IP $remote_addr` | 把真实客户端 IP 带给后端 | 请求经过 Nginx 后，后端看到的来源 IP 全是 `127.0.0.1`，日志、限流、风控全部失效 |\n| `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for` | 传一串 IP 链（经过的每一层代理） | 有 CDN、负载均衡时用它才拿得到最外层真实 IP；`X-Real-IP` 只保留最后一个 |\n\n## 三、一个请求进来后，Nginx 心里怎么想\n\n```\n浏览器访问 http://example.com/about\n        │\n        ▼\n① 看端口：80 → 找到 listen 80 的 server\n        │\n        ▼\n② 看 Host：example.com → 匹配 server_name\n        │\n        ▼\n③ 看路径：/about → 匹配 location（/ 比 /api/ 更匹配）\n        │\n        ▼\n④ root + 路径：找 /usr/local/apps/www/about\n        │\n        ├─ 有 → 直接把文件发回去\n        └─ 没有 → try_files 兜底给 /index.html（200）\n\n浏览器访问 http://example.com/api/user\n        │\n        ▼\n③ 路径 /api/user → 命中 location /api/\n        │\n        ▼\n④ 剥掉 /api → 转给 127.0.0.1:3000/user\n        │\n        ▼\n⑤ Node 处理后把响应原路返回给浏览器\n```\n\n## 四、改完怎么让它生效\n\n```bash\nnginx -t                # 先查语法\nnginx -s reload         # 平滑重载，不断连接（推荐 nginx -t && nginx -s reload）\n```\n\n验证不走 DNS、直接测本机：\n\n```bash\ncurl -I -H \"Host: example.com\" http://127.0.0.1/\ncurl -i -H \"Host: example.com\" http://127.0.0.1/api/health\n```\n\n## 五、新手最容易踩的 6 个坑\n\n1. **`root` 写成相对路径** → 文件永远找不到，Nginx 返回 404，但你会以为是路径写错了\n2. **`proxy_pass` 漏了或多了尾斜杠** → 后端所有接口 404，且日志里看不出原因\n3. **`try_files` 顺序写反**（先写 `/index.html`）→ 所有静态资源都变成 HTML\n4. **只写了 `location /`，`/api/` 落在它里面** → 接口请求拿到 index.html，前端报 `Unexpected token '<'`\n5. **改了 `conf.d/xxx.conf` 却没被主配置 `include`** → reload 一百次也不生效，先用 `nginx -T` 确认\n6. **`nginx -t` 通过但业务 502** → 语法对不代表后端活着，要 `ss -tlnp | grep ':3000'` 确认端口在监听",
+      "commands": [
+        {
+          "desc": "改配置后先测语法（不生效，安全）",
+          "cmd": "nginx -t",
+          "parts": [
+            { "token": "nginx", "desc": "Nginx 可执行程序，也可用绝对路径 /usr/local/nginx/sbin/nginx" },
+            { "token": "-t", "desc": "test：只检查配置文件语法，不加载，不打扰线上" }
+          ]
+        },
+        {
+          "desc": "语法通过后平滑重载",
+          "cmd": "nginx -t && nginx -s reload",
+          "parts": [
+            { "token": "nginx", "desc": "Nginx 可执行程序" },
+            { "token": "-t", "desc": "检查语法" },
+            { "token": "&&", "desc": "逻辑与：前一条成功才执行后一条，配置写错就不会去 reload" },
+            { "token": "nginx", "desc": "Nginx 可执行程序" },
+            { "token": "-s", "desc": "signal，给 master 进程发信号" },
+            { "token": "reload", "desc": "平滑重载：启新 worker，旧 worker 处理完手上的请求再退" }
+          ]
+        },
+        {
+          "desc": "带域名头访问本机，验证静态站（跳过 DNS）",
+          "cmd": "curl -I -H \"Host: example.com\" http://127.0.0.1/",
+          "parts": [
+            { "token": "curl", "desc": "命令行发 HTTP 请求的工具" },
+            { "token": "-I", "desc": "只取响应头（HEAD 请求），不下载正文，看状态码最快" },
+            { "token": "-H \"Host: example.com\"", "desc": "手动指定 Host 头，模拟用域名访问，绕过 DNS 和 CDN" },
+            { "token": "http://127.0.0.1/", "desc": "直接打本机 80 端口" }
+          ]
+        },
+        {
+          "desc": "验证 /api/ 转发是否通",
+          "cmd": "curl -i -H \"Host: example.com\" http://127.0.0.1/api/health",
+          "parts": [
+            { "token": "curl", "desc": "发 HTTP 请求" },
+            { "token": "-i", "desc": "include：输出里带上响应头，能看到状态码和 Content-Type" },
+            { "token": "-H \"Host: example.com\"", "desc": "模拟域名访问" },
+            { "token": "http://127.0.0.1/api/health", "desc": "请求会被 location /api/ 拦下并转给后端" }
+          ]
+        },
+        {
+          "desc": "确认后端端口真的在监听（502 必查）",
+          "cmd": "ss -tlnp | grep ':3000'",
+          "parts": [
+            { "token": "ss", "desc": "查看 socket 状态的工具，netstat 的现代替代品" },
+            { "token": "-tlnp", "desc": "t=TCP，l=只听 listen 状态，n=不解析域名，p=显示进程名" },
+            { "token": "|", "desc": "管道，把结果交给 grep 过滤" },
+            { "token": "grep ':3000'", "desc": "只留下 3000 端口那行，确认 Node 真的在跑" }
+          ]
+        },
+        {
+          "desc": "看报错原因（配置/后端问题都会写在这）",
+          "cmd": "tail -f /usr/local/nginx/logs/error.log",
+          "parts": [
+            { "token": "tail", "desc": "查看文件末尾内容" },
+            { "token": "-f", "desc": "follow：持续跟踪新写入的行，Ctrl+C 退出" },
+            { "token": "/usr/local/nginx/logs/error.log", "desc": "错误日志路径，systemd 安装一般是 /var/log/nginx/error.log" }
+          ]
+        }
+      ],
+      "tips": [
+        "`root` 一定写绝对路径：相对路径是相对 Nginx 安装目录（如 /usr/local/nginx），不是你以为的当前目录。",
+        "`proxy_pass` 末尾的斜杠决定 `/api` 前缀保不保留，这是 Nginx 新手最常见的 404 来源。",
+        "`try_files` 的兜底目标必须放最后，写成 `/index.html` 意味着「找不到文件就返回首页」，不是「优先首页」。",
+        "`nginx -t` 通过只说明语法正确，业务报 502 还要查后端进程和端口，两件事完全不同。",
+        "一台机器多个域名时，每个 server 块都要有 `listen` + `server_name`；只改域名不改 listen 会互相抢端口。",
+        "改完配置先 `nginx -t && nginx -s reload`，不要直接 restart，reload 不会断掉正在进行的请求。"
+      ]
+    },
+    {
+      "id": "nginx-location-match",
+      "category": "nginx",
+      "title": "location 匹配规则与 proxy_pass 尾斜杠",
+      "summary": "Nginx 选哪个 location、路径前缀保不保留，全靠两条规则；搞懂这两条，90% 的 404 和 502 都能自己定位。",
+      "tags": ["Nginx", "location", "proxy_pass", "路径匹配"],
+      "updatedAt": "2026-11-03",
+      "content": "## 一、location 的 5 种写法\n\n| 写法 | 名称 | 匹配方式 | 例子 |\n|---|---|---|---|\n| `location = /favicon.ico` | 精确匹配 | 路径必须**完全一致** | 只匹配 `/favicon.ico`，`/favicon.ico/` 不算 |\n| `location ^~ /static/` | 前缀优先 | 匹配前缀后**停止查找正则** | `/static/a.css` 命中，且不再试正则 |\n| `location ~ \\.php$` | 正则（区分大小写） | 按正则表达式匹配 | 只匹配小写 `.php` 结尾 |\n| `location ~* \\.(jpg|png)$` | 正则（忽略大小写） | 同上，不区分大小写 | `.JPG`、`.Png` 都能命中 |\n| `location /api/` | 普通前缀 | 最长前缀优先 | `/api/user` 命中，`/api` 本身不命中（少了斜杠） |\n\n## 二、优先级：从高到低\n\n```\n1. location =      精确匹配        （最高，命中即停）\n2. location ^~     前缀 + 停正则\n3. location ~/~*   正则（按配置里出现的顺序，先匹配先用）\n4. location /xxx   普通前缀（选最长的一个）\n```\n\n记住一句话：**等号最优先，正则比普通前缀优先，普通前缀里长的优先。**\n\n### 一个真实易错点\n\n```nginx\nlocation /api/ { }      # 只匹配 /api/xxx\nlocation /api  { }      # 匹配 /api、/apixxx（注意：/apixxx 也会命中！）\n```\n\n`/api` 没有尾斜杠时是纯字符串前缀匹配，`/apixxx` 也会命中；想只限制目录，写 `/api/`。\n\n## 三、proxy_pass 尾斜杠：4 种组合对照\n\n| location | proxy_pass | 请求 `/api/user` 实际转发到 | 说明 |\n|---|---|---|---|\n| `location /api/` | `http://127.0.0.1:3000` | `http://127.0.0.1:3000/api/user` | 不带斜杠：**原样转发**，前缀保留 |\n| `location /api/` | `http://127.0.0.1:3000/` | `http://127.0.0.1:3000/user` | 带斜杠：**替换掉 location 的前缀** |\n| `location /api` | `http://127.0.0.1:3000/v1` | `http://127.0.0.1:3000/v1/user` | 路径拼接：`/v1` 替换 `/api` |\n| `location /` | `http://127.0.0.1:3000` | `http://127.0.0.1:3000/api/user` | 根路径不涉及替换 |\n\n判断口诀：**proxy_pass 只要带了 URI（哪怕只是一个 `/`），就用它替换 location 匹配到的那一段；不带 URI 就原样拼。**\n\n## 四、转发时必须带的请求头\n\n| 头 | 作用 | 不带会怎样 |\n|---|---|---|\n| `Host $http_host` | 告诉后端用户实际访问的域名 | 后端生成的重定向、绝对链接指向 `127.0.0.1:3000` |\n| `X-Real-IP $remote_addr` | 真实客户端 IP | 后端日志里全是 Nginx 的 IP |\n| `X-Forwarded-For $proxy_add_x_forwarded_for` | 完整 IP 链 | 多级代理时拿不到最初来源 |\n| `X-Forwarded-Proto $scheme` | 原始协议是 http 还是 https | 后端判断 `req.protocol` 会一直是 http，导致重定向死循环 |\n\n## 五、出了 404 / 502 怎么按顺序查\n\n```\n404 ──> 先看 location 有没有命中：nginx -T | grep -n location\n    ──> 再看 proxy_pass 前缀对不对：后端路由是 /user 还是 /api/user\n\n502 ──> 后端没起来：ss -tlnp | grep ':3000'\n    ──> 端口不对：proxy_pass 里的端口和实际不一致\n    ──> localhost 解析成 IPv6：改成 127.0.0.1 再试\n    ──> 后端崩了：看 error.log 里的 connect() failed\n\n504 ──> 后端处理太慢：加 proxy_read_timeout，或查后端慢查询\n```",
+      "commands": [
+        {
+          "desc": "列出所有 location，确认到底命中哪条规则",
+          "cmd": "nginx -T | grep -n 'location'",
+          "parts": [
+            { "token": "nginx", "desc": "Nginx 可执行程序" },
+            { "token": "-T", "desc": "大写 T：输出最终生效的完整配置（include 全展开）" },
+            { "token": "|", "desc": "管道，把输出交给 grep" },
+            { "token": "grep", "desc": "按关键词过滤" },
+            { "token": "-n", "desc": "显示行号，方便对照上下文" },
+            { "token": "'location'", "desc": "要查找的指令名，加单引号避免 shell 误解" }
+          ]
+        },
+        {
+          "desc": "验证某个路径被转到了哪里",
+          "cmd": "curl -i http://127.0.0.1/api/user",
+          "parts": [
+            { "token": "curl", "desc": "发 HTTP 请求" },
+            { "token": "-i", "desc": "带上响应头，能看到状态码和 Content-Type" },
+            { "token": "http://127.0.0.1/api/user", "desc": "不带 Host 头就直接打本机，适合本地快速验证" }
+          ]
+        },
+        {
+          "desc": "分别测后端端口和转发结果",
+          "cmd": "curl -i http://127.0.0.1:3000/user",
+          "parts": [
+            { "token": "curl", "desc": "发 HTTP 请求" },
+            { "token": "-i", "desc": "输出响应头" },
+            { "token": "http://127.0.0.1:3000/user", "desc": "绕过 Nginx 直接打后端。这一步通了、走 Nginx 不通，问题就一定是转发规则" }
+          ]
+        }
+      ],
+      "tips": [
+        "`location /api` 会命中 `/apixxx`，只有 `location /api/` 才是「以 /api/ 开头」。这是接口路由被静态文件截胡的常见原因。",
+        "正则 location 按配置里书写顺序生效，前缀 location 按「最长」生效，两者规则不同，别混。",
+        "`proxy_pass` 后面带 URI（含末尾 `/`）会替换 location 匹配段；不带 URI 才原样保留。判断 404 先看这里。",
+        "后端日志里 IP 全是 127.0.0.1，说明漏了 `X-Real-IP` / `X-Forwarded-For`，不是后端日志写错了。",
+        "HTTPS 由 Nginx 终止时，后端 `req.protocol` 永远是 http；要传 `X-Forwarded-Proto`，否则可能出现无限重定向。",
+        "排查顺序永远是：先直接 curl 后端 → 再 curl 经过 Nginx 的地址 → 最后看 error.log，三段定位能省很多瞎猜。"
       ]
     }
   ]
