@@ -1373,6 +1373,73 @@ window.KNOWLEDGE_DATA =
       ]
     },
     {
+      "id": "linux-df",
+      "category": "linux",
+      "title": "df -h：磁盘空间一目了然",
+      "summary": "disk free，看整个系统每个磁盘分区还剩多少空间；-h 把字节转成 K/M/G 人类可读。",
+      "tags": ["Linux", "磁盘", "空间", "排查"],
+      "updatedAt": "2026-11-03",
+      "content": "`df`（disk free）显示**整个系统所有挂载点**的空间占用。服务器磁盘满了先跑它，一眼定位是哪个分区爆了。\n\n## 典型输出（逐列拆解）\n\n```\nFilesystem      Size  Used Avail Use% Mounted on\n/dev/vda1        99G   42G   53G  45% /\ntmpfs           1.9G     0  1.9G   0% /dev/shm\n/dev/vdb1       200G   15G  185G   8% /data\n```\n\n| 列 | 含义 | 怎么看 |\n|---|---|---|\n| Filesystem | 设备文件（哪块盘） | `/dev/vda1` 是系统盘、`/dev/vdb1` 是额外挂的数据盘、`tmpfs` 是内存盘 |\n| Size | 总容量 | 这块盘一共多大 |\n| Used | 已用空间 | 被占了多少 |\n| Avail | 还能剩多少 | 注意：不是 Size-Used，留了 5% 给 root 预留 |\n| Use% | 使用率 | **超过 80% 就要警惕**，90%+ 基本要清 |\n| Mounted on | 挂载点（这个盘装到哪个目录下） | `/` 是根目录系统盘、`/data` 是数据盘、`/dev/shm` 是内存盘 |\n\n## 三条核心要点\n\n1. **Avail ≠ Size - Used**：Linux 默认预留 5% 给 root 用户，所以即使显示 Use% 100%，root 还是能写进 5% 的应急空间。\n2. **Use% 是看问题的第一指标**：不要纠结 Used 和 Avail 各多少，先扫一眼 Use% 列，找最大的那个。\n3. **`tmpfs` 不是磁盘**：它是内存盘，容量来自你的 RAM，里面的东西重启就没了，临时文件才用它。\n\n## 和 du 的区别\n\n| 命令 | 回答的问题 |\n|---|---|\n| `df -h` | **哪个分区**满了？（系统级别，按盘统计） |\n| `du -sh 目录` | **哪个目录**占了这么大？（往细分查哪个目录最肥） |\n\n排查顺序：`df -h` 定盘 → `du -sh /目录/* | sort -rh | head` 定位到具体目录。\n\n## 最容易看懵的一个现象\n\n用 `df -h` 看到 `/` 使用率 90%+，但 `du -sh /` 加起来却远小于 90%——通常是：\n\n- **已删除但还被进程占着的文件**：rm 了但进程没重启，句柄没关，空间没释放。用 `lsof +L1 | head` 找出来，重启对应进程或直接 `kill`。\n- **Docker 占了大量空间**：容器日志、镜像、volume 都在系统盘，用 `docker system df` 单独查。\n\n## 只看根分区（最常用的一条）\n\n```bash\ndf -h /\n```\n\n服务器一般只关心系统盘（`/`），没必要把 tmpfs、/boot 这些无关的都列出来。",
+      "commands": [
+        {
+          "desc": "以人类可读格式列出所有分区（你贴的这条）",
+          "cmd": "df -h",
+          "parts": [
+            { "token": "df", "desc": "disk free，显示每个挂载点的磁盘空间情况" },
+            { "token": "-h", "desc": "human-readable，把字节数转成易读的 K/M/G/T" }
+          ]
+        },
+        {
+          "desc": "只看根分区（系统盘，服务器上最常用）",
+          "cmd": "df -h /",
+          "parts": [
+            { "token": "df", "desc": "显示磁盘空间" },
+            { "token": "-h", "desc": "人类可读格式" },
+            { "token": "/", "desc": "只看根分区（Mounted on 为 / 的那一行）" }
+          ]
+        },
+        {
+          "desc": "按挂载点看某个特定分区",
+          "cmd": "df -h /data",
+          "parts": [
+            { "token": "df", "desc": "显示磁盘空间" },
+            { "token": "-h", "desc": "人类可读" },
+            { "token": "/data", "desc": "只看 /data 这块盘（比如你专门挂数据盘的情况）" }
+          ]
+        },
+        {
+          "desc": "同时显示 inode 使用情况（排查 inode 耗尽问题）",
+          "cmd": "df -hi /",
+          "parts": [
+            { "token": "df", "desc": "显示磁盘空间" },
+            { "token": "-h", "desc": "人类可读" },
+            { "token": "-i", "desc": "inode 模式：看 inode 用了多少而不是磁盘字节数" },
+            { "token": "/", "desc": "根分区" }
+          ]
+        },
+        {
+          "desc": "查看某个目录下各子目录的占用（往细分查）",
+          "cmd": "du -sh /* | sort -rh | head -10",
+          "parts": [
+            { "token": "du", "desc": "disk usage，统计目录实际占用" },
+            { "token": "-sh", "desc": "s=只显示每个参数的汇总，h=人类可读" },
+            { "token": "/*", "desc": "根目录下所有一级子目录" },
+            { "token": "|", "desc": "管道" },
+            { "token": "sort -rh", "desc": "按人类可读数字倒序排（大的在前）" },
+            { "token": "head -10", "desc": "只看前 10 行" }
+          ]
+        }
+      ],
+      "tips": [
+        "服务器磁盘满了先 `df -h` 看 Use%，不要直接就删东西；先定位是哪个分区，再 `du` 往细分查。",
+        "Use% 超过 80% 就该警惕；95%+ 系统可能开始出问题（日志写不进去、MySQL 报错等）。",
+        "`df` 和 `du` 结果对不上时，先查是不是有 rm 了但被进程占着的文件（`lsof +L1`），再查 Docker（`docker system df`）。",
+        "inode 也会耗尽：磁盘还有空间但新建文件报 'no space left on device'，用 `df -hi` 看 inode 用了多少。",
+        "Docker 环境下，/var/lib/docker 往往占掉系统盘大头；删镜像/清构建缓存前先用 `docker system df` 确认能省多少。",
+        "`du` 默认不统计隐藏文件；要看 `.` 开头的目录得显式写：`du -sh .[^.]*/*` 或用 find。"
+      ]
+    },
+    {
       "id": "docker-command-cheatsheet",
       "category": "docker",
       "title": "Docker 核心命令速查表（高频到进阶）",
