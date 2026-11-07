@@ -12,7 +12,8 @@ window.KNOWLEDGE_DATA =
     { "id": "ops", "name": "服务器排查", "desc": "端口、负载、内存、日志与定时任务" },
     { "id": "deploy", "name": "发布部署", "desc": "发版流程、回滚策略与环境切换" },
     { "id": "docker", "name": "Docker", "desc": "镜像、容器与隔离环境" },
-    { "id": "nginx", "name": "Nginx 基础", "desc": "最小可用配置、location 匹配与请求转发" }
+    { "id": "nginx", "name": "Nginx 基础", "desc": "最小可用配置、location 匹配与请求转发" },
+    { "id": "mysql", "name": "MySQL 排查", "desc": "库表结构、自增、数据核对与 binlog" }
   ],
   "entries": [
     {
@@ -2159,6 +2160,117 @@ window.KNOWLEDGE_DATA =
         "后端日志里 IP 全是 127.0.0.1，说明漏了 `X-Real-IP` / `X-Forwarded-For`，不是后端日志写错了。",
         "HTTPS 由 Nginx 终止时，后端 `req.protocol` 永远是 http；要传 `X-Forwarded-Proto`，否则可能出现无限重定向。",
         "排查顺序永远是：先直接 curl 后端 → 再 curl 经过 Nginx 的地址 → 最后看 error.log，三段定位能省很多瞎猜。"
+      ]
+    },
+    {
+      "id": "mysql-forensics-basic",
+      "category": "mysql",
+      "title": "MySQL 数据核对：用 SQL 反推「这张表经历过什么」",
+      "summary": "数据看起来少了，怎么从建表时间、自增值、现存数据、关联残留、binlog 五层逐步反推，每条 SQL 都讲清在问数据库什么。",
+      "tags": ["MySQL", "information_schema", "binlog", "自增", "排查"],
+      "updatedAt": "2026-11-07",
+      "content": "数据「看起来少了」的时候，先别急着下结论。用几条 `information_schema` 和 binlog 查询，可以反推出**这张表经历过什么**。\n\n下面这套是「建表 → 自增 → 现存数据 → 关联残留 → 日志」五层逐步收窄的排查路径。\n\n## 排查思路：五个问题\n\n| 顺序 | 想知道什么 | 查哪里 |\n|---|---|---|\n| ① | 整库是什么时候建的？ | `information_schema.tables` 的 `create_time` |\n| ② | 表里最多来过多少条？ | `AUTO_INCREMENT` 和实际 id 的差 |\n| ③ | 现存数据是什么时候的？ | 表里的 `createdAt` / `updatedAt` |\n| ④ | 删掉的 id 有没有被别处引用？ | 关联表按 id 分组统计 |\n| ⑤ | 有没有日志能还原？ | `general_log` / `binlog` |\n\n## ① 看表是什么时候建的\n\n```sql\nSELECT table_name, table_rows, create_time\nFROM information_schema.tables\nWHERE table_schema = 'bike77'\nORDER BY table_name;\n```\n\n如果整库 17 张表的 `create_time` 全是同一个时间点（比如 `2026-11-04 11:07:41`），说明那天整库被导入或重建过——不是你「用着用着数据消失了」，而是**这份数据本来就是从那天的备份恢复出来的**。\n\n`information_schema` 是 MySQL 自带的「元数据字典」，记录所有库、表、列、索引的信息。它不存业务数据，只存「结构说明」。\n\n## ② 看自增值（判断是否被删过）\n\n```sql\nSELECT AUTO_INCREMENT\nFROM information_schema.tables\nWHERE table_schema = 'bike77' AND table_name = 'product_tag';\n```\n\n这是整个排查里最关键的一步。**自增值只会涨，不会因为删除而回退。**\n\n| 现象 | 说明 |\n|---|---|\n| `AUTO_INCREMENT = 8`，表里 id 是 1~7 | 正常，没删过 |\n| `AUTO_INCREMENT = 18`，表里只剩 id 1~7 | **8~17 这 10 行确实存在过，后来被物理删掉了** |\n\n`DELETE` 只删行，不动计数器；只有 `TRUNCATE` 才会把自增重置回 1。所以「自增比现有最大 id 大很多」就是删过数据的硬证据。\n\n## ③ 看现存数据的时间\n\n```sql\nSELECT id, name, tag_group, createdAt, updatedAt, is_delete\nFROM product_tag\nORDER BY id;\n```\n\n这一步回答「现在这些数据是哪来的」：\n\n- `createdAt` 是 2024 年 → 数据来自更早的备份，不是最近新建的\n- `is_delete` 全等于 2 → 走的是**物理删除**，不是软删（软删一般 `is_delete` 会变 1）\n\n这里要分清两种情况：\n\n| 删除方式 | 表现 |\n|---|---|\n| 软删（逻辑删） | 行还在，`is_delete` / `deleted_at` 字段变了 |\n| 物理删（`DELETE`） | 行没了，只剩自增值留下痕迹 |\n\n## ④ 看有没有残留关联\n\n```sql\nSELECT product_tag_id, COUNT(*)\nFROM product_product_tag\nWHERE product_tag_id BETWEEN 8 AND 17\nGROUP BY product_tag_id;\n```\n\n要问的是：**那些被删掉的 id，在别的表里还有没有引用？**\n\n- 查出空结果 → 老数据没被引用，这些 id 后面被新数据复用也不会串数据，安全\n- 查出有行 → 说明存在「孤儿关联」或历史脏数据，新数据复用 id 后会指到别人的记录上\n\n`GROUP BY product_tag_id` 是为了按 id 分别计数，不加的话只会得到一个总数。\n\n## ⑤ 看有没有日志可查\n\n先确认日志开没开：\n\n```sql\nSHOW VARIABLES LIKE 'general_log';   -- OFF：没记录所有执行过的 SQL\nSHOW VARIABLES LIKE 'log_bin';       -- ON：开了二进制日志\nSHOW VARIABLES LIKE 'binlog_format'; -- ROW：只记数据变化，不记 SQL 原文\n```\n\n三个开关的含义：\n\n| 变量 | 作用 | 对排查的影响 |\n|---|---|---|\n| `general_log` | 记录**所有**执行过的 SQL 原文 | 开了就能直接看到谁执行了 DELETE；性能损耗大，生产基本关 |\n| `log_bin` | 记录所有数据变更（二进制） | 开了才有得查，是恢复数据的唯一依据 |\n| `binlog_format` | binlog 的记录格式 | `ROW` 只记「哪行变成了什么」，不记 SQL；`STATEMENT` 才记 SQL 原文 |\n\n再看还剩哪些日志文件：\n\n```sql\nSHOW BINARY LOGS;\n```\n\n如果只剩最近 2 个文件，说明更早的已经被自动清理（`expire_logs_days` / `binlog_expire_logs_seconds` 控制的保留期，默认 7~30 天）。**日志过期就找不回来了**，这也是为什么数据出问题要马上查。\n\n最后看具体事件：\n\n```sql\nSHOW BINLOG EVENTS IN 'mysql-bin.002133';\n```\n\n注意：**`ROW` 格式下 `Info` 列只给表名**（如 `bike77.product_tag`），看不到具体删了哪几行。要看明细得用 `mysqlbinlog` 工具导出内容，或者先确认 `binlog_format` 是不是 `ROW`。\n\n## 我是怎么跑这些 SQL 的\n\n服务器/本机没装 `mysql` 命令行客户端时，可以用 Node 临时连库：\n\n```js\nconst mysql = require('mysql2/promise');\n\n(async () => {\n  const conn = await mysql.createConnection({\n    host: '127.0.0.1',\n    user: 'root',\n    password: '你的密码',\n    database: 'bike77'\n  });\n  const [rows] = await conn.execute('SELECT id, name FROM product_tag');\n  console.table(rows);\n  await conn.end();\n})();\n```\n\n最省事的还是用图形化客户端（Navicat / DataGrip / DBeaver / 阿里云 DMS），上面的 SQL 直接粘贴执行，结果表格看得更清楚。\n\n## 一句话总结\n\n> **自增值是删除的唯一痕迹。** 表里少了什么看不出来，但 `AUTO_INCREMENT` 会诚实地告诉你「这里曾经有多少行」。",
+      "commands": [
+        {
+          "desc": "① 列出整库所有表 + 行数估算 + 建表时间",
+          "cmd": "SELECT table_name, table_rows, create_time FROM information_schema.tables WHERE table_schema = 'bike77' ORDER BY table_name;",
+          "parts": [
+            { "token": "SELECT", "desc": "查询关键字，指定要取哪几列" },
+            { "token": "table_name, table_rows, create_time", "desc": "表名、行数估算值、建表时间（table_rows 是估算，InnoDB 不精确，要准确条数得 COUNT(*)）" },
+            { "token": "FROM information_schema.tables", "desc": "MySQL 自带的元数据字典，存所有库表的结构和统计信息，不是业务表" },
+            { "token": "WHERE table_schema = 'bike77'", "desc": "只筛选 bike77 这个库；写错库名会返回空结果，别以为库不存在" },
+            { "token": "ORDER BY table_name", "desc": "按表名字母序排列，方便对照" }
+          ]
+        },
+        {
+          "desc": "② 查自增值，判断有没有被删过数据",
+          "cmd": "SELECT AUTO_INCREMENT FROM information_schema.tables WHERE table_schema = 'bike77' AND table_name = 'product_tag';",
+          "parts": [
+            { "token": "SELECT AUTO_INCREMENT", "desc": "下一个要分配的 id；它比现有最大 id 大很多，说明中间的行被删过" },
+            { "token": "FROM information_schema.tables", "desc": "元数据字典里的表统计信息" },
+            { "token": "WHERE table_schema = 'bike77'", "desc": "限定库名" },
+            { "token": "AND table_name = 'product_tag'", "desc": "再限定到具体表，两个条件同时满足" }
+          ]
+        },
+        {
+          "desc": "③ 看现存数据的创建/更新时间与软删标记",
+          "cmd": "SELECT id, name, tag_group, createdAt, updatedAt, is_delete FROM product_tag ORDER BY id;",
+          "parts": [
+            { "token": "SELECT id, name, ...", "desc": "只取关心的列，避免大表 SELECT * 拖慢" },
+            { "token": "createdAt, updatedAt", "desc": "数据什么时候建的、最后一次改的；能看出数据来自哪份备份" },
+            { "token": "is_delete", "desc": "软删标记；全为 2 说明没走软删，删除是真删行" },
+            { "token": "FROM product_tag", "desc": "目标业务表" },
+            { "token": "ORDER BY id", "desc": "按 id 排序，一眼看出 id 是否连续、缺了哪几段" }
+          ]
+        },
+        {
+          "desc": "④ 查被删掉的 id 在关联表里还有没有残留引用",
+          "cmd": "SELECT product_tag_id, COUNT(*) FROM product_product_tag WHERE product_tag_id BETWEEN 8 AND 17 GROUP BY product_tag_id;",
+          "parts": [
+            { "token": "SELECT product_tag_id, COUNT(*)", "desc": "按标签 id 统计出现次数" },
+            { "token": "FROM product_product_tag", "desc": "多对多关联表（商品-标签）" },
+            { "token": "WHERE product_tag_id BETWEEN 8 AND 17", "desc": "只查那些「已经不存在」的 id 区间" },
+            { "token": "GROUP BY product_tag_id", "desc": "按 id 分组，每个 id 一行计数；不加就只有一个总数" }
+          ]
+        },
+        {
+          "desc": "⑤ 确认三种日志开关的状态",
+          "cmd": "SHOW VARIABLES LIKE 'general_log';",
+          "parts": [
+            { "token": "SHOW VARIABLES", "desc": "查看 MySQL 运行时变量（配置）" },
+            { "token": "LIKE 'general_log'", "desc": "按名字模糊匹配；换成 log_bin、binlog_format 就能查另外两个开关" },
+            { "token": "general_log=OFF", "desc": "关闭状态说明没记录执行过的 SQL 原文，删数据的语句已经无从查起" }
+          ]
+        },
+        {
+          "desc": "⑤ 看 binlog 格式：决定能不能看到 SQL 原文",
+          "cmd": "SHOW VARIABLES LIKE 'binlog_format';",
+          "parts": [
+            { "token": "SHOW VARIABLES", "desc": "查看运行时配置" },
+            { "token": "LIKE 'binlog_format'", "desc": "二进制日志的记录格式，常见值 ROW / STATEMENT / MIXED" },
+            { "token": "ROW", "desc": "只记录「哪行数据变了」，不记 SQL，所以看不到谁执行的、执行的什么语句" }
+          ]
+        },
+        {
+          "desc": "⑤ 看还剩哪些 binlog 文件（判断能往前追溯多久）",
+          "cmd": "SHOW BINARY LOGS;",
+          "parts": [
+            { "token": "SHOW", "desc": "查看类语句" },
+            { "token": "BINARY LOGS", "desc": "列出所有二进制日志文件及大小；只剩最近几个说明更早的被自动清理了" }
+          ]
+        },
+        {
+          "desc": "⑤ 看某个 binlog 里的事件（ROW 格式只能看到表名）",
+          "cmd": "SHOW BINLOG EVENTS IN 'mysql-bin.002133';",
+          "parts": [
+            { "token": "SHOW BINLOG EVENTS", "desc": "按顺序列出该文件里的事件：写入、更新、删除等" },
+            { "token": "IN 'mysql-bin.002133'", "desc": "指定要看的日志文件，文件名来自 SHOW BINARY LOGS" },
+            { "token": "Info 列", "desc": "ROW 格式下只有表名（如 bike77.product_tag），想要明细得用 mysqlbinlog 导出" }
+          ]
+        },
+        {
+          "desc": "没有 mysql 客户端时，用 Node 临时连库跑 SQL",
+          "cmd": "node -e \"const m=require('mysql2/promise');m.createConnection({host:'127.0.0.1',user:'root',password:'***',database:'bike77'}).then(async c=>{console.table((await c.execute('SELECT id,name FROM product_tag'))[0]);await c.end();})\"",
+          "parts": [
+            { "token": "node", "desc": "Node.js 运行时，需先 npm i mysql2" },
+            { "token": "-e", "desc": "直接执行后面这段代码，不用建文件" },
+            { "token": "mysql2/promise", "desc": "MySQL 驱动，promise 版支持 await" },
+            { "token": "createConnection({...})", "desc": "连接参数：host / user / password / database" },
+            { "token": "console.table(...)", "desc": "把结果按表格打印，比 console.log 好读" },
+            { "token": "c.end()", "desc": "关闭连接，不关进程会一直挂着" }
+          ]
+        }
+      ],
+      "tips": [
+        "`table_rows` 是 InnoDB 的估算值，误差可能很大；要准确条数必须 `COUNT(*)`。",
+        "`AUTO_INCREMENT` 只能证明「曾经有过这么多行」，不能证明「谁在什么时候删的」，别单独当结论。",
+        "`TRUNCATE TABLE` 会把自增值重置回 1，所以数据被清空过反而看不出来——这是自增值判断的盲区。",
+        "`binlog_format = ROW` 时 binlog 里没有 SQL 原文，只有行级变化；想还原语句要用 mysqlbinlog 解析。",
+        "binlog 有保留期（`expire_logs_days` / `binlog_expire_logs_seconds`），过期自动删；数据一出问题要立刻查，隔几天就没了。",
+        "`general_log` 默认 OFF，开销大，生产不会常开；没有它就只能靠 binlog，而 binlog 又要权限（SUPER / REPLICATION SLAVE）。",
+        "查 binlog 用 `SHOW BINLOG EVENTS` 只适合小文件，大文件会刷屏，用 `mysqlbinlog --start-datetime` 过滤更稳。",
+        "软删和物理删要分清：软删看字段（is_delete / deleted_at），物理删只能看自增值和 binlog。",
+        "图形化客户端（Navicat / DataGrip / DBeaver / DMS）可以直接粘这些 SQL，不用装命令行客户端。"
       ]
     }
   ]
